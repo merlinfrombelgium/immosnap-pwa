@@ -384,7 +384,11 @@ function parseAddress(html: string): string | null {
 }
 
 function parsePrice(html: string): string | null {
-  const m = /€\s?[\d.]{4,}/.exec(html);
+  // Decode the common euro/space entities first (immotijl renders "&euro;&nbsp;317.000").
+  const decoded = html
+    .replace(/&euro;|&#8364;|&#x20ac;/gi, "€")
+    .replace(/&nbsp;|&#160;/gi, " ");
+  const m = /€\s?[\d][\d.\s]{3,}\d/.exec(decoded);
   return m ? m[0].replace(/\s+/g, " ").trim() : null;
 }
 
