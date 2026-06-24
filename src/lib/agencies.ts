@@ -203,11 +203,25 @@ async function whiseWpListings(domain: string): Promise<AgencyListing[]> {
   const out: AgencyListing[] = [];
   // Listing links may be absolute or root-relative ("/te-koop/<id>/").
   const idRe = new RegExp(`(?:https?://(?:www\\.)?${domain.replace(/\./g, "\\.")})?/te-koop/(\\d{5,})/?`, "gi");
+  // Whise CDN gallery images are keyed by the SAME listing id ("Pictures/<id>/").
+  // The detail page is a JS-only shell, so we harvest the facade gallery here.
+  const imgRe = /https?:\/\/[a-z0-9.-]*whise\.eu\/[^"'\s)]*Pictures\/(\d+)\/[^"'\s)]+\.(?:jpe?g|webp)/gi;
 
   for (let page = 1; page <= 8; page++) {
     const url = page === 1 ? `https://${domain}/te-koop/` : `https://${domain}/te-koop/${page}/`;
     const html = await fetchText(url);
     if (!html) break;
+
+    // Group gallery images on this page by listing id.
+    const imagesById = new Map<string, string[]>();
+    let im: RegExpExecArray | null;
+    imgRe.lastIndex = 0;
+    while ((im = imgRe.exec(html))) {
+      const arr = imagesById.get(im[1]) ?? [];
+      if (!arr.includes(im[0])) arr.push(im[0]);
+      imagesById.set(im[1], arr);
+    }
+
     let added = 0;
     let m: RegExpExecArray | null;
     idRe.lastIndex = 0;
@@ -221,12 +235,12 @@ async function whiseWpListings(domain: string): Promise<AgencyListing[]> {
         ref: id,
         type: null,
         forSale: true,
-        town: null,
+        town: null, // not in static HTML for this CRM; see town-gap note in matcher
         townLabel: null,
         postcode: null,
         address: null,
         price: null,
-        imageUrls: [],
+        imageUrls: (imagesById.get(id) ?? []).slice(0, 12),
       });
     }
     if (added === 0) break; // no new listings on this page -> end of pagination
@@ -355,32 +369,63 @@ function harvestImages(html: string, domain: string): string[] {
 const STREET =
   /([A-ZÉ][a-zà-üA-Zéëèïêç'.\- ]*?(?:straat|laan|steenweg|stwg|weg|baan|dreef|kaai|markt|plein|plaats|wijk|hof|pad|kouter|veld|berg|dijk|lei|ring|park|gracht|vest|kade|rij|dam|brug)\s*\d+\s*[a-zA-Z]?)\s*,?\s*(\d{4})\s+([A-Z][a-zà-ü\-\s]+?)\b/;
 
-function parseAddress(html: string): string | null {
-  // JSON-LD PostalAddress (Skarabee exposes ld+json)
+/** Parse every ld+json block into JS objects (best-effort). */
+function parseJsonLdBlocks(html: string): any[] {
+  const out: any[] = [];
   const ld = html.match(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi) || [];
   for (const block of ld) {
     const raw = block.replace(/^[\s\S]*?>/, "").replace(/<\/script>$/i, "");
     try {
-      const j = JSON.parse(raw);
-      const stack: any[] = Array.isArray(j) ? [...j] : [j];
-      while (stack.length) {
-        const o = stack.pop();
-        if (o && typeof o === "object") {
-          if (o.address) {
-            const a = o.address;
-            if (typeof a === "string") return a;
-            const parts = [a.streetAddress, a.postalCode, a.addressLocality].filter(Boolean);
-            if (parts.length) return parts.join(", ");
-          }
-          for (const v of Object.values(o)) if (v && typeof v === "object") stack.push(v);
-        }
-      }
+      out.push(JSON.parse(raw));
     } catch {
-      /* ignore */
+      /* ignore malformed block */
+    }
+  }
+  return out;
+}
+
+function parseAddress(html: string): string | null {
+  // JSON-LD PostalAddress (Skarabee exposes ld+json)
+  for (const j of parseJsonLdBlocks(html)) {
+    const stack: any[] = Array.isArray(j) ? [...j] : [j];
+    while (stack.length) {
+      const o = stack.pop();
+      if (o && typeof o === "object") {
+        if (o.address) {
+          const a = o.address;
+          if (typeof a === "string") return a;
+          const parts = [a.streetAddress, a.postalCode, a.addressLocality].filter(Boolean);
+          if (parts.length) return parts.join(", ");
+        }
+        for (const v of Object.values(o)) if (v && typeof v === "object") stack.push(v);
+      }
     }
   }
   const m = STREET.exec(html);
   return m ? `${m[1].trim()}, ${m[2]} ${m[3].trim()}` : null;
+}
+
+/** Collect listing photos from ld+json `image`/`photo` fields (Skarabee uses
+ *  extension-less CDN URLs that the extension-based harvester cannot match). */
+function jsonLdImages(html: string): string[] {
+  const urls: string[] = [];
+  const push = (v: any) => {
+    if (typeof v === "string" && /^https?:\/\//.test(v) && !IMG_EXCLUDE.test(v)) urls.push(v);
+    else if (Array.isArray(v)) v.forEach(push);
+    else if (v && typeof v === "object" && typeof v.url === "string") push(v.url);
+  };
+  for (const j of parseJsonLdBlocks(html)) {
+    const stack: any[] = Array.isArray(j) ? [...j] : [j];
+    while (stack.length) {
+      const o = stack.pop();
+      if (o && typeof o === "object") {
+        if (o.image) push(o.image);
+        if (o.photo) push(o.photo);
+        for (const v of Object.values(o)) if (v && typeof v === "object") stack.push(v);
+      }
+    }
+  }
+  return [...new Set(urls)];
 }
 
 function parsePrice(html: string): string | null {
@@ -397,7 +442,8 @@ export async function fetchListingDetail(listing: AgencyListing): Promise<Agency
   const html = await fetchText(listing.listingUrl);
   if (!html) return listing;
   const domain = bareDomain(listing.listingUrl) || "";
-  const images = harvestImages(html, domain);
+  // ld+json images first (Skarabee's gallery), then extension-based CDN images.
+  const images = [...new Set([...jsonLdImages(html), ...harvestImages(html, domain)])];
   const address = parseAddress(html);
   return {
     ...listing,
@@ -411,15 +457,33 @@ export async function fetchListingDetail(listing: AgencyListing): Promise<Agency
   };
 }
 
+/**
+ * Lenient town match. Belgian municipalities have deelgemeenten, so a reverse-
+ * geocode can return a sub-municipality or a slightly different label than the
+ * listing slug. Treat them as a match when either normalized value contains the
+ * other (e.g. "dendermonde" vs "dendermondecentrum"), to avoid silently emptying
+ * the candidate set on a slug/geocode variance.
+ */
+function townMatches(listingTown: string | null, queryTown: string): boolean {
+  if (!listingTown) return false;
+  return listingTown === queryTown || listingTown.includes(queryTown) || queryTown.includes(listingTown);
+}
+
 /** Filter a listing set to the for-sale ones in the given town. */
 export function filterListings(
   listings: AgencyListing[],
   opts: { town?: string | null; type?: string | null } = {}
 ): AgencyListing[] {
   const town = normalizeTown(opts.town);
-  return listings.filter((l) => {
-    if (!l.forSale) return false;
-    if (town && l.town && l.town !== town) return false;
+  const forSale = listings.filter((l) => l.forSale);
+  // Some CRMs (Whise-on-WordPress) do not expose the town in static HTML. If the
+  // agency carries no town metadata at all, town-narrowing is impossible, so we
+  // return the full for-sale set and let the vision-match + human confirm rather
+  // than emptying the candidate set on a town we cannot know. (Proper fix: the
+  // Whise partner API returns address/town/status natively.)
+  const anyTownKnown = forSale.some((l) => l.town);
+  return forSale.filter((l) => {
+    if (town && anyTownKnown && !townMatches(l.town, town)) return false;
     if (opts.type && l.type && l.type !== opts.type) return false;
     return true;
   });

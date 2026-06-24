@@ -59,14 +59,26 @@ async function main() {
 
   // 6. Smoke the other two agencies (non-fatal — they widen the demo, not the gate).
   console.log("\n--- other agencies (informational) ---");
+  const others: Record<string, Awaited<ReturnType<typeof getAgencyListings>>> = {};
   for (const a of AGENCY_REGISTRY.filter((x) => x.domain !== "immotijl.be")) {
     try {
-      const { listings: ls } = await getAgencyListings(a, { refresh: true });
-      const sale = ls.filter((l) => l.forSale);
-      console.log(`  ${a.name} (${a.crm}): ${ls.length} listings, ${sale.length} for-sale, sample: ${sale[0]?.listingUrl || "none"}`);
+      const res = await getAgencyListings(a, { refresh: true });
+      others[a.domain] = res;
+      const sale = res.listings.filter((l) => l.forSale);
+      const withImgs = res.listings.filter((l) => l.imageUrls.length).length;
+      console.log(`  ${a.name} (${a.crm}): ${res.listings.length} listings, ${sale.length} for-sale, ${withImgs} with images, sample: ${sale[0]?.listingUrl || "none"}`);
     } catch (e) {
       console.log(`  ${a.name}: error ${(e as Error).message}`);
     }
+  }
+
+  // 7. Regression guards for the Whise-on-WordPress case (Immo Lot):
+  const lot = others["immolot.be"];
+  if (lot) {
+    check("immolot has facade galleries", lot.listings.some((l) => l.imageUrls.length > 0), `${lot.listings.filter((l) => l.imageUrls.length).length} of ${lot.listings.length} with images`);
+    // Town is not in immolot static HTML; a town filter must NOT empty the set.
+    const narrowed = filterListings(lot.listings, { town: "Dendermonde" });
+    check("immolot town filter does not false-empty", narrowed.length > 0, `${narrowed.length} returned (town unknown -> all for-sale)`);
   }
 
   finish();
