@@ -1,0 +1,75 @@
+
+> immosnap-matcher@0.1.0 verify:gate
+> tsx src/verify-gate.ts
+
+[env] could not read /Users/merlo/Developer/projects/immosnap-pwa/proto/.env: ENOENT: no such file or directory, open '/Users/merlo/Developer/projects/immosnap-pwa/proto/.env'
+=== Gate verify: proto/PXL_20260224_171834897.jpg must resolve to immotijl.be/.../7523945 ===
+
+[match] scored 1/53 7298252=10
+[match] scored 2/53 7130151=10
+[match] scored 3/53 6017432=10
+[match] scored 4/53 6775420=10
+[match] scored 5/53 7337165=10
+[match] scored 6/53 7337207=95
+[match] scored 7/53 7596570=10
+[match] scored 8/53 7584697=10
+[match] scored 9/53 7523945=100
+[match] scored 10/53 7567143=10
+[match] scored 11/53 7631860=10
+[match] scored 12/53 7633073=10
+[match] scored 13/53 7636724=10
+[match] scored 14/53 7647055=10
+[match] scored 15/53 7640261=90
+[match] scored 16/53 7647383=10
+[match] scored 17/53 7594119=20
+[match] scored 18/53 7659730=10
+[match] scored 19/53 7665499=10
+[match] scored 20/53 7666543=10
+[match] scored 21/53 7665531=10
+[match] scored 22/53 7655896=10
+[match] scored 23/53 7665412=10
+[match] scored 24/53 7671753=95
+[match] scored 25/53 7674501=10
+[match] scored 26/53 7674923=10
+[match] scored 27/53 7671660=95
+[match] scored 28/53 7682490=10
+[match] scored 29/53 7682494=90
+[match] scored 30/53 7682528=10
+[match] scored 31/53 7684118=80
+[match] scored 32/53 7687381=10
+[match] scored 33/53 7688518=10
+[match] scored 34/53 7692077=80
+[match] scored 35/53 7702918=10
+[match] scored 36/53 7710206=10
+[match] scored 37/53 7710376=0
+[match] scored 38/53 7709571=10
+[match] scored 39/53 7711204=95
+[match] scored 40/53 7714424=95
+[match] scored 41/53 7712466=90
+[match] scored 42/53 7717808=0
+[match] scored 43/53 7714462=10
+[match] scored 44/53 7716359=10
+[match] scored 45/53 7718882=90
+[match] scored 46/53 7718886=10
+[match] scored 47/53 7718937=10
+[match] scored 48/53 7738459=20
+[match] scored 49/53 7743420=10
+[match] scored 50/53 7729436=10
+[match] scored 51/53 7742971=20
+[match] scored 52/53 7747567=95
+[match] scored 53/53 7749350=95
+OCR agency: Immo Tijl | phone: 052 690 691
+town: Dendermonde (source: caller) | crm: whise-sitemap
+candidates evaluated: 53 | matchKind: confident
+
+  #1  100%  7523945  Rosstraat 6, 9200 Dendermonde  <== GATE
+  #2  95%  7337207  https://www.immotijl.be/appartement-te-koop-in-dendermonde/7337207
+  #3  95%  7671660  Oude Heirbaan 4, 9200 Dendermonde
+  #4  95%  7671753  Oude Heirbaan 4, 9200 Dendermonde
+  #5  95%  7711204  Baasrodestraat 61, 9200 Dendermonde
+
+gate listing in set:       yes (rank #1)
+top candidate is gate:     yes
+confident match:           yes
+
+=== GATE PASS: resolves to 7523945, ranked #1, confident. ===

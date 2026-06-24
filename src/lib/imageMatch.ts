@@ -11,6 +11,8 @@ export async function fetchImage(url: string, maxDim = 900): Promise<Buffer | nu
         Accept: "image/avif,image/webp,image/*,*/*;q=0.8",
         Referer: new URL(url).origin + "/",
       },
+      // A dead/slow image URL must not stall a vision worker indefinitely.
+      signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return null;
     const buf = Buffer.from(await res.arrayBuffer());

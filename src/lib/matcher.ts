@@ -9,7 +9,6 @@ import {
 } from "./agencies.js";
 import { reverseGeocode } from "./geo.js";
 import { scoreCandidate } from "./imageMatch.js";
-import { sleep } from "./browser.js";
 
 /**
  * The matcher (validated agency-site path):
@@ -25,7 +24,27 @@ import { sleep } from "./browser.js";
 const CONFIDENT = 0.7; // >= this on the top candidate => a confident match
 const TOWN_CANDIDATE_CAP = 60; // evaluate the whole town set (Dendermonde ~53)
 const NO_TOWN_CANDIDATE_CAP = 24; // when town is unknown, cap the vision work
-const PACING_MS = 350;
+const SCORE_CONCURRENCY = 6; // parallel facade vision calls
+const SCORE_TIMEOUT_MS = 30_000; // hard cap per candidate so a straggler cannot stall the run
+
+/** Resolve `p`, or `fallback` if it does not settle within `ms`. */
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([p, new Promise<T>((r) => setTimeout(() => r(fallback), ms))]);
+}
+
+/** Map over items with a bounded number of concurrent workers, preserving order. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
 
 export interface MatchInput {
   imageBuffer: Buffer;
@@ -152,10 +171,12 @@ export async function matchImage(input: MatchInput): Promise<MatchResult> {
   const queryB64 = await prepImage(input.imageBuffer, 1024);
 
   // 6. Facade vision-match each candidate (contact sheet => one call per listing).
-  const scored: MatchCandidate[] = [];
-  for (const listing of pool) {
+  //    Run with bounded concurrency so a large home-town set (e.g. ~53 in
+  //    Dendermonde) finishes in ~1 min instead of serially over several.
+  let scoredCount = 0;
+  async function scoreOne(listing: AgencyListing): Promise<MatchCandidate> {
     const detail = listing.imageUrls.length ? listing : await fetchListingDetail(listing);
-    let candidate: MatchCandidate = {
+    const candidate: MatchCandidate = {
       listingUrl: detail.listingUrl,
       ref: detail.ref,
       type: detail.type,
@@ -168,7 +189,7 @@ export async function matchImage(input: MatchInput): Promise<MatchResult> {
     };
     try {
       if (detail.imageUrls.length) {
-        const res = await scoreCandidate(queryB64, detail.imageUrls, 9);
+        const res = await scoreCandidate(queryB64, detail.imageUrls, 6);
         candidate.confidence = Math.round(Math.max(0, Math.min(1, res.score)) * 100);
         candidate.reason = res.reason || "";
         candidate.facadeImageUrl = res.facadeUrl ?? candidate.facadeImageUrl;
@@ -178,9 +199,23 @@ export async function matchImage(input: MatchInput): Promise<MatchResult> {
     } catch (e) {
       candidate.reason = `scoring error: ${(e as Error).message}`;
     }
-    scored.push(candidate);
-    await sleep(PACING_MS);
+    if (process.env.DEBUG_MATCH) console.error(`[match] scored ${++scoredCount}/${pool.length} ${candidate.ref}=${candidate.confidence}`);
+    return candidate;
   }
+
+  const scored = await mapLimit(pool, SCORE_CONCURRENCY, (listing) =>
+    withTimeout(scoreOne(listing), SCORE_TIMEOUT_MS, {
+      listingUrl: listing.listingUrl,
+      ref: listing.ref,
+      type: listing.type,
+      town: listing.townLabel,
+      address: listing.address,
+      price: listing.price,
+      facadeImageUrl: listing.imageUrls[0] ?? null,
+      confidence: 0,
+      reason: "timed out",
+    })
+  );
 
   scored.sort((a, b) => b.confidence - a.confidence);
 

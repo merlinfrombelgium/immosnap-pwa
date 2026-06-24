@@ -34,6 +34,8 @@ async function callGemini(parts: Part[], jsonOut = true, maxOutputTokens = 1024)
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        // Bound each vision/OCR call so a stalled request cannot hang a worker.
+        signal: AbortSignal.timeout(45_000),
       });
       if (!res.ok) {
         lastErr = `${model}: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`;
