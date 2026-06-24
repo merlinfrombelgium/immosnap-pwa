@@ -10,7 +10,8 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "match": "tsx src/match.ts",
-    "sanity": "tsx src/sanity.ts"
+    "sanity": "tsx src/sanity.ts",
+    "sanity:agencies": "tsx src/sanity-agencies.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.6",

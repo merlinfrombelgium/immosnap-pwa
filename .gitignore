@@ -4,3 +4,4 @@ proto/.env
 *.log
 dist/
 debug/
+.cache/
