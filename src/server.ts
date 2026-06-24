@@ -31,24 +31,32 @@ app.post("/match", async (c) => {
     Number.isFinite(lat) && Number.isFinite(lon)
       ? { lat: Number(lat), lon: Number(lon) }
       : null;
+  const town = typeof body.town === "string" && body.town.trim() ? body.town.trim() : null;
 
   const result = await matchImage({
     imageBuffer: Buffer.from(await image.arrayBuffer()),
     gps,
-    maxCandidates: 4,
+    town,
   });
 
   return c.json({
     agency: result.agency,
     phone: result.phone,
     town: result.town,
+    website: result.website,
+    matchKind: result.matchKind,
     candidates: result.candidates.map((candidate) => ({
       listingUrl: candidate.listingUrl,
+      ref: candidate.ref,
+      type: candidate.type,
+      town: candidate.town,
       address: candidate.address,
       price: candidate.price,
       facadeImageUrl: candidate.facadeImageUrl,
       confidence: candidate.confidence,
+      reason: candidate.reason,
     })),
+    debug: result.debug,
   });
 });
 
