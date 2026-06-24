@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f4efe6" />
+    <title>ImmoSnap Demo</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero">
+        <p class="eyebrow">ImmoSnap</p>
+        <h1>Tap-to-confirm house matcher</h1>
+        <p class="intro">
+          Upload or capture a photo of a Belgian for-sale sign. The backend reads the agency,
+          resolves likely listings, and lets a human confirm the right house.
+        </p>
+      </section>
+
+      <section class="panel controls">
+        <form id="match-form">
+          <label class="uploader" for="image-input">
+            <span>Select a photo</span>
+            <input id="image-input" name="image" type="file" accept="image/*" capture="environment" required />
+          </label>
+
+          <div class="actions">
+            <button type="button" id="gps-button" class="secondary">Use device GPS</button>
+            <button type="submit" id="submit-button">Find candidates</button>
+          </div>
+        </form>
+
+        <div class="preview-wrap">
+          <img id="preview" alt="Selected house preview" hidden />
+          <p id="gps-status" class="muted">GPS optional. OCR + portal resolve still works without it.</p>
+        </div>
+      </section>
+
+      <section class="panel status-panel">
+        <div id="status">Waiting for a photo.</div>
+      </section>
+
+      <section class="panel" id="result-panel" hidden>
+        <div class="result-header">
+          <div>
+            <p class="label">Agency</p>
+            <h2 id="agency-name">Unknown</h2>
+          </div>
+          <div>
+            <p class="label">Phone</p>
+            <p id="agency-phone">-</p>
+          </div>
+          <div>
+            <p class="label">Town</p>
+            <p id="agency-town">-</p>
+          </div>
+        </div>
+
+        <div id="candidate-list" class="candidate-list"></div>
+      </section>
+    </main>
+
+    <template id="candidate-template">
+      <article class="candidate-card">
+        <img class="candidate-image" alt="" />
+        <div class="candidate-body">
+          <div class="candidate-topline">
+            <span class="confidence"></span>
+            <a class="listing-link" target="_blank" rel="noreferrer">Open listing</a>
+          </div>
+          <h3 class="address"></h3>
+          <p class="price"></p>
+          <button type="button" class="confirm-button">This is the match</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

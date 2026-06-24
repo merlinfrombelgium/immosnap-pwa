@@ -1,0 +1,16 @@
+Build a demo-able PWA for ImmoSnap (human-in-the-loop matcher). Read proto/SPEC-backend-matcher.md and proto/.env (keys: GEMINI_API_KEY, MAPS_API_KEY, BROWSERLESS_URL, BROWSERLESS_TOKEN). Reuse the existing src/lib (browser.ts = Browserless render, gemini.ts = OCR+vision, env.ts) and src/portals/immoweb.ts.
+
+Goal: a small web app a user opens on a laptop OR phone that:
+1. lets them upload or capture a house photo,
+2. runs OCR (Gemini gemini-3.5-flash) to read the agency name + phone off the TE KOOP sign,
+3. resolves that agency to its for-sale listings, best-effort via portals (immoscoop / realo / immoweb); partial results are fine,
+4. shows the candidate listings as cards (facade thumbnail + address + price + link) for the user to TAP the correct one. Auto-rank with Gemini vision if feasible, but DO NOT block on perfect auto-match. The human confirms.
+
+Deliver:
+- A Node + Hono (or Express) backend exposing POST /match (multipart image, optional gps) returning {agency, phone, town, candidates:[{listingUrl,address,price,facadeImageUrl,confidence}]}.
+- A minimal single-page PWA frontend (lightweight/vanilla is fine) with an installable manifest + service worker, that calls /match and renders the tap-to-confirm UI.
+- `npm run dev` starts it locally on a port.
+- Commit to git branch demo-pwa.
+- Write proto/STATUS-C.md: what works, how to run it, blockers. Run the backend against the 4 proto/PXL_*.jpg to sanity-check OCR + resolve and record results in STATUS-C.md.
+
+Keep secrets out of committed code (.env is gitignored). Be pragmatic: a working tap-to-confirm demo beats a perfect auto-matcher.
