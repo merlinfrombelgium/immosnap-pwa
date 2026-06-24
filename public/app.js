@@ -6,6 +6,7 @@ const gpsButton = document.querySelector("#gps-button");
 const gpsStatus = document.querySelector("#gps-status");
 const submitButton = document.querySelector("#submit-button");
 const resultPanel = document.querySelector("#result-panel");
+const verdict = document.querySelector("#verdict");
 const agencyName = document.querySelector("#agency-name");
 const agencyPhone = document.querySelector("#agency-phone");
 const agencyTown = document.querySelector("#agency-town");
@@ -77,9 +78,15 @@ form.addEventListener("submit", async (event) => {
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
 
     renderResult(data);
-    statusEl.textContent = data.candidates.length
-      ? "Tap the right listing to confirm the match."
-      : "OCR worked, but no candidates were resolved from the portals.";
+    if (!data.candidates.length) {
+      statusEl.textContent = data.agency
+        ? `Read the sign as ${data.agency}, but found no listings to compare. Try a closer photo or add GPS.`
+        : "Could not read the agency off the sign. Try a sharper photo of the sign.";
+    } else if (data.matchKind === "confident") {
+      statusEl.textContent = "Strong match found. Confirm it is the right house.";
+    } else {
+      statusEl.textContent = "No confident match. Tap the right house to confirm.";
+    }
   } catch (error) {
     statusEl.textContent = `Match failed: ${error.message}`;
   } finally {
@@ -87,11 +94,37 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
+// Honest, evidence-light label for a single candidate's facade score.
+function confidenceLabel(score) {
+  if (score >= 70) return { text: `Likely match (${score}%)`, cls: "is-high" };
+  if (score >= 40) return { text: `Possible (${score}%)`, cls: "is-mid" };
+  return { text: `Unlikely (${score}%)`, cls: "is-low" };
+}
+
+function renderVerdict(data) {
+  verdict.classList.remove("is-confident", "is-candidates", "is-none");
+  if (!data.candidates.length) {
+    verdict.classList.add("is-none");
+    verdict.textContent = data.agency
+      ? `${data.agency}: no listings to compare yet. Confirm manually or retake the photo.`
+      : "Could not read the agency from the sign.";
+  } else if (data.matchKind === "confident") {
+    verdict.classList.add("is-confident");
+    verdict.textContent = "Strong facade match. Please confirm it is the right house.";
+  } else {
+    verdict.classList.add("is-candidates");
+    const where = data.town ? ` in ${data.town}` : "";
+    verdict.textContent = `No confident match. Here are ${data.agency || "the agency"}'s candidates${where}. Tap the right one.`;
+  }
+  verdict.hidden = false;
+}
+
 function renderResult(data) {
   agencyName.textContent = data.agency || "Unknown agency";
   agencyPhone.textContent = data.phone || "-";
   agencyTown.textContent = data.town || "-";
   candidateList.innerHTML = "";
+  renderVerdict(data);
 
   data.candidates.forEach((candidate, index) => {
     const node = candidateTemplate.content.firstElementChild.cloneNode(true);
@@ -104,10 +137,14 @@ function renderResult(data) {
 
     img.src = candidate.facadeImageUrl || "/icon.svg";
     img.alt = candidate.address || `Candidate ${index + 1}`;
-    confidence.textContent = `${candidate.confidence}% confidence`;
+    const label = confidenceLabel(candidate.confidence ?? 0);
+    confidence.textContent = label.text;
+    confidence.classList.add(label.cls);
+    // Only the top candidate of a confident result is pre-highlighted.
+    if (data.matchKind === "confident" && index === 0) node.classList.add("is-top");
     link.href = candidate.listingUrl;
-    address.textContent = candidate.address || "Address unavailable";
-    price.textContent = candidate.price || "Price unavailable";
+    address.textContent = candidate.address || candidate.town || "Address unavailable";
+    price.textContent = candidate.price || "Price on listing";
 
     confirmButton.addEventListener("click", () => {
       document

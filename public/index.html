@@ -15,8 +15,8 @@
         <p class="eyebrow">ImmoSnap</p>
         <h1>Tap-to-confirm house matcher</h1>
         <p class="intro">
-          Upload or capture a photo of a Belgian for-sale sign. The backend reads the agency,
-          resolves likely listings, and lets a human confirm the right house.
+          Upload or capture a photo of a Belgian for-sale sign. The backend reads the agency
+          from the sign, pulls that agency's own listings, and lets you confirm the right house.
         </p>
       </section>
 
@@ -35,7 +35,7 @@
 
         <div class="preview-wrap">
           <img id="preview" alt="Selected house preview" hidden />
-          <p id="gps-status" class="muted">GPS optional. OCR + portal resolve still works without it.</p>
+          <p id="gps-status" class="muted">GPS optional. It narrows candidates to the right town.</p>
         </div>
       </section>
 
@@ -59,6 +59,7 @@
           </div>
         </div>
 
+        <div id="verdict" class="verdict" hidden></div>
         <div id="candidate-list" class="candidate-list"></div>
       </section>
     </main>
