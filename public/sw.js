@@ -1,8 +1,9 @@
-const CACHE = "immosnap-demo-v1";
-const ASSETS = ["/", "/app.css", "/app.js", "/manifest.webmanifest", "/icon.svg"];
+const CACHE = "immosnap-demo-v7";
+const ASSETS = ["/", "/app.css?v=7", "/app.js?v=7", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
+  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
@@ -19,3 +20,5 @@ self.addEventListener("fetch", (event) => {
     caches.match(event.request).then((cached) => cached || fetch(event.request))
   );
 });
+
+self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));

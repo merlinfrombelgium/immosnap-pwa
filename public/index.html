@@ -1,84 +1,123 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#f4efe6" />
-    <title>ImmoSnap Demo</title>
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/app.css" />
-  </head>
-  <body>
-    <main class="app-shell">
-      <section class="hero">
-        <p class="eyebrow">ImmoSnap</p>
-        <h1>Tap-to-confirm house matcher</h1>
-        <p class="intro">
-          Upload or capture a photo of a Belgian for-sale sign. The backend reads the agency
-          from the sign, pulls that agency's own listings, and lets you confirm the right house.
-        </p>
-      </section>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#6d5efc" />
+  <title>ImmoSnap — snap a sign, find the listing</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="./app.css?v=7" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">◎</span>
+      <span class="brand-name">Immo<span>Snap</span></span>
+    </div>
+    <span class="brand-tag">Snap a for-sale sign → find the listing</span>
+  </header>
 
-      <section class="panel controls">
-        <form id="match-form">
-          <label class="uploader" for="image-input">
-            <span>Select a photo</span>
-            <input id="image-input" name="image" type="file" accept="image/*" capture="environment" required />
-          </label>
+  <main class="wrap">
+    <section class="hero" id="hero">
+      <h1>Point. Snap. Found.</h1>
+      <p class="sub">Photograph any <strong>TE KOOP</strong> board. ImmoSnap reads the agency off the sign and surfaces the matching property.</p>
 
-          <div class="actions">
-            <button type="button" id="gps-button" class="secondary">Use device GPS</button>
-            <button type="submit" id="submit-button">Find candidates</button>
-          </div>
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="file" accept="image/*" hidden />
+        <div class="dz-inner">
+          <div class="dz-icon">📷</div>
+          <div class="dz-title">Take a photo or upload</div>
+          <div class="dz-hint">Tap to use your camera, or drop an image here</div>
+        </div>
+      </label>
+
+      <div class="gps-row">
+        <span id="gps-badge" class="badge badge-muted">No location yet</span>
+        <button id="gps-btn" class="link-btn" type="button">Use device GPS instead</button>
+      </div>
+    </section>
+
+    <section class="result" id="result" hidden>
+      <div class="preview-card">
+        <img id="preview-img" alt="your photo" />
+        <div class="read">
+          <div class="read-label">Read from the sign</div>
+          <div class="read-agency" id="r-agency">—</div>
+          <div class="read-meta"><span id="r-phone"></span><span id="r-town"></span></div>
+        </div>
+      </div>
+
+      <!-- Working-location panel: display-only thumbnail + manual entry + drop-pin -->
+      <div class="loc" id="loc">
+        <div class="loc-head">
+          <span id="loc-badge" class="badge badge-muted">No location yet</span>
+          <span id="loc-addr" class="loc-addr"></span>
+        </div>
+
+        <div class="map-wrap" id="map-wrap" hidden>
+          <!-- DISPLAY-ONLY thumbnail (no drag/zoom/scroll); tap to open the modal -->
+          <div id="map" class="map map-static"></div>
+          <div class="map-tap-hint">Tap the map to adjust</div>
+        </div>
+
+        <div class="loc-actions">
+          <button id="adjust-btn" class="loc-btn" type="button">📍 Adjust location / drop pin</button>
+          <button id="manual-btn" class="link-btn" type="button">⌨️ Enter address manually</button>
+        </div>
+
+        <form id="manual-form" class="manual-form" hidden>
+          <input id="manual-input" type="text" inputmode="text" autocomplete="street-address"
+                 placeholder="Street + number + town (Belgium)" aria-label="Address" />
+          <button type="submit" class="primary-btn" id="manual-submit">Use this address</button>
         </form>
+        <div id="manual-hint" class="manual-hint" hidden></div>
+      </div>
 
-        <div class="preview-wrap">
-          <img id="preview" alt="Selected house preview" hidden />
-          <p id="gps-status" class="muted">GPS optional. It narrows candidates to the right town.</p>
-        </div>
-      </section>
+      <div class="status" id="status"></div>
 
-      <section class="panel status-panel">
-        <div id="status">Waiting for a photo.</div>
-      </section>
+      <div class="candidates-head" id="cand-head" hidden>
+        <h2>Possible matches</h2>
+        <span class="preview-note">preview · precision improves with live agency data</span>
+      </div>
+      <div class="candidates" id="candidates"></div>
 
-      <section class="panel" id="result-panel" hidden>
-        <div class="result-header">
-          <div>
-            <p class="label">Agency</p>
-            <h2 id="agency-name">Unknown</h2>
-          </div>
-          <div>
-            <p class="label">Phone</p>
-            <p id="agency-phone">-</p>
-          </div>
-          <div>
-            <p class="label">Town</p>
-            <p id="agency-town">-</p>
-          </div>
-        </div>
+      <button class="reset-btn" id="reset" type="button" hidden>↺ Snap another</button>
+    </section>
+  </main>
 
-        <div id="verdict" class="verdict" hidden></div>
-        <div id="candidate-list" class="candidate-list"></div>
-      </section>
-    </main>
+  <template id="candidate-template">
+    <a class="card" target="_blank" rel="noopener">
+      <div class="card-img"><img alt="listing" loading="lazy" /></div>
+      <div class="card-body">
+        <div class="card-addr"></div>
+        <div class="card-price"></div>
+        <div class="card-cta">View listing →</div>
+      </div>
+    </a>
+  </template>
 
-    <template id="candidate-template">
-      <article class="candidate-card">
-        <img class="candidate-image" alt="" />
-        <div class="candidate-body">
-          <div class="candidate-topline">
-            <span class="confidence"></span>
-            <a class="listing-link" target="_blank" rel="noreferrer">Open listing</a>
-          </div>
-          <h3 class="address"></h3>
-          <p class="price"></p>
-          <button type="button" class="confirm-button">This is the match</button>
-        </div>
-      </article>
-    </template>
+  <!-- Near-fullscreen map modal: this is the ONLY place the pin can be moved -->
+  <div id="map-modal" class="modal" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-label="Adjust location">
+    <div class="modal-card">
+      <div class="modal-head">
+        <strong>Drop the pin on the property</strong>
+        <span class="modal-hint">Tap the map or drag the marker</span>
+      </div>
+      <div id="modal-map" class="modal-map"></div>
+      <div id="modal-addr" class="modal-addr"></div>
+      <div class="modal-actions">
+        <button id="modal-cancel" class="ghost-btn" type="button">Cancel</button>
+        <button id="modal-confirm" class="primary-btn" type="button">Confirm location</button>
+      </div>
+    </div>
+  </div>
 
-    <script src="/app.js" type="module"></script>
-  </body>
+  <footer class="foot">ImmoSnap · a ZiMi prototype</footer>
+  <script src="./app.js?v=7" defer></script>
+  <div id="buildstamp" style="text-align:center;font-size:11px;opacity:.45;padding:6px">build 2026-06-28 16:10 UTC · v7</div>
+</body>
 </html>

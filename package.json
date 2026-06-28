@@ -12,7 +12,10 @@
     "match": "tsx src/match.ts",
     "sanity": "tsx src/sanity.ts",
     "sanity:agencies": "tsx src/sanity-agencies.ts",
-    "verify:gate": "tsx src/verify-gate.ts"
+    "verify:gate": "tsx src/verify-gate.ts",
+    "test": "node --import tsx --test src/lib/*.test.ts src/*.test.ts",
+    "e2e": "tsx src/e2e.ts",
+    "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.6",
