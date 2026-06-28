@@ -36,6 +36,26 @@ body{
 .dz-title{font-weight:650; margin-top:8px; font-size:17px}
 .dz-hint{color:var(--muted); font-size:13px; margin-top:4px}
 
+/* ── capture entry points: Take photo (camera) + Upload (gallery) ── */
+.capture-actions{display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:18px}
+.capture-btn{
+  display:inline-flex; align-items:center; gap:8px; cursor:pointer;
+  padding:13px 22px; border-radius:14px; font-weight:650; font-size:16px;
+  border:1px solid transparent; user-select:none;
+  transition:.16s transform,.16s box-shadow,.16s border-color,.16s background;
+}
+.capture-btn:active{transform:translateY(1px)}
+.capture-primary{background:var(--brand); color:#fff; box-shadow:var(--shadow)}
+.capture-primary:hover{background:#5a4cf0}
+.capture-secondary{background:var(--panel-2); color:var(--txt); border-color:var(--line)}
+.capture-secondary:hover{border-color:var(--brand)}
+/* Keep file inputs in the layout (not display:none) so iOS Safari always
+   fires the camera/file intent; they're just visually removed. */
+.visually-hidden{
+  position:absolute !important; width:1px; height:1px; padding:0; margin:-1px;
+  overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0;
+}
+
 .gps-row{display:flex; align-items:center; justify-content:center; gap:12px; margin-top:14px; flex-wrap:wrap}
 .badge{font-size:12px; padding:5px 11px; border-radius:999px; font-weight:600}
 .badge-muted{background:var(--panel-2); color:var(--muted)}

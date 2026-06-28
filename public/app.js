@@ -4,6 +4,7 @@
 // geocoding / reverse-geocoding is Google, server-side (GET /geocode, /reverse).
 
 const fileInput = document.querySelector("#file");
+const cameraInput = document.querySelector("#camera");
 const dropzone = document.querySelector("#dropzone");
 const gpsBadge = document.querySelector("#gps-badge");
 const gpsBtn = document.querySelector("#gps-btn");
@@ -174,6 +175,8 @@ dropzone.addEventListener("drop", (e) => {
   if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
 });
 fileInput.addEventListener("change", () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+// "Take photo" (rear camera, capture="environment") feeds the identical pipeline.
+if (cameraInput) cameraInput.addEventListener("change", () => { if (cameraInput.files[0]) handleFile(cameraInput.files[0]); });
 
 gpsBtn.addEventListener("click", async () => {
   gpsBadge.textContent = "Getting device GPS…";
@@ -234,7 +237,7 @@ modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); }
 
 resetBtn.addEventListener("click", () => {
   result.hidden = true; hero.hidden = false; candidates.innerHTML = "";
-  candHead.hidden = true; resetBtn.hidden = true; fileInput.value = "";
+  candHead.hidden = true; resetBtn.hidden = true; fileInput.value = ""; if (cameraInput) cameraInput.value = "";
   exifCoords = deviceCoords = manualCoords = pinCoords = working = null; source = null;
   mapWrap.hidden = true; manualForm.hidden = true; manualHint.hidden = true; manualInput.value = "";
   locBadge.textContent = "No location yet"; locBadge.className = "badge badge-muted"; locAddr.textContent = "";
