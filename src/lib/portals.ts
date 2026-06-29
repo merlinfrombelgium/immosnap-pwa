@@ -3,6 +3,7 @@ import { getBrowser, newPreparedPage, sleep, renderPage } from "./browser.js";
 import type { Page } from "puppeteer-core";
 import { getImmowebListing, resolveImmowebAgency } from "../portals/immoweb.js";
 import { getSpottoListing, resolveSpottoMakelaar } from "../portals/spotto.js";
+import { discoverOwnSite } from "./ownsite.js";
 
 /**
  * PORTAL resolver.
@@ -363,9 +364,18 @@ function parseAddress(d: ScrapeData): string | null {
 }
 
 function parsePrice(d: ScrapeData): string | null {
-  const hay = `${d.ogTitle || ""} ${d.text || ""}`;
-  const m = /€\s?[\d.]{4,}/.exec(hay);
-  return m ? m[0].replace(/\s+/g, " ").trim() : null;
+  // Pick the largest PLAUSIBLE euro amount (a property price is 5-8 digits). The
+  // magnitude guard kills tiny matches (€/m², cadastral income) that produced
+  // junk like "€1008" with the old naive `/€\s?[\d.]{4,}/` regex.
+  const hay = `${d.ogTitle || ""} ${d.text || ""}`
+    .replace(/&euro;|&#8364;|&#x20ac;/gi, "€")
+    .replace(/&nbsp;|&#160;/gi, " ");
+  let best: number | null = null;
+  for (const m of hay.matchAll(/€\s?([0-9][0-9.\s]{3,}[0-9])/g)) {
+    const n = Number(m[1].replace(/[^\d]/g, ""));
+    if (n >= 10_000 && n <= 25_000_000 && (best == null || n > best)) best = n;
+  }
+  return best != null ? "€ " + best.toLocaleString("de-DE") : null;
 }
 
 /* ----------------------- agency own-site (generic) extraction --------------- */
@@ -492,15 +502,61 @@ function urlInTown(url: string, townNorm: string): boolean {
 
 /* --------------------------------- Resolver --------------------------------- */
 
+/**
+ * Find the agency's OWN domain when none was printed on the sign: ask SerpApi for
+ * the agency name and take the first organic result that is not a known portal or
+ * social/search host. Generic — no per-agency table.
+ */
+async function resolveOwnDomain(agency: string, town?: string | null): Promise<string | null> {
+  if (!agency) return null;
+  const links = await serpLinks(`"${agency}"${town ? ` ${town}` : ""} immo`, 10);
+  const token = agency.toLowerCase().replace(/[^a-z0-9]/g, "");
+  for (const l of links) {
+    const host = hostOf(l);
+    if (!host || PORTAL_HOST.test(host) || NON_SITE_HOST.test(host)) continue;
+    const flat = host.replace(/[^a-z0-9]/g, "");
+    // Trust a host that echoes the agency name, else the first plausible own site.
+    if ((token.length >= 4 && flat.includes(token.slice(0, 6))) || links.indexOf(l) === 0) return host;
+  }
+  return null;
+}
+
 export async function resolveCandidates(
   q: ResolveQuery,
   opts: { maxCandidates?: number } = {}
 ): Promise<Candidate[]> {
   const maxCandidates = opts.maxCandidates ?? 10;
-  const domain = siteDomain(q.website);
+  let domain = siteDomain(q.website);
   const agency = (q.agency || "").trim();
   const agencyToken = agency.toLowerCase().replace(/[^a-z0-9]/g, "");
   const townNorm = normTownSlug(q.town);
+
+  // ── OWN-SITE FIRST (dynamic + generic) ──────────────────────────────────────
+  // Resolve the agency's own domain (printed website, else discovered), then run
+  // the static, time-boxed sitemap discovery. This is the validated path and
+  // avoids the slow per-page Browserless scrape that caused the 240s timeouts.
+  if (!domain) domain = await resolveOwnDomain(agency, q.town);
+  if (domain) {
+    try {
+      const own = await discoverOwnSite(
+        { domain, town: q.town },
+        { maxCandidates }
+      );
+      if (own.length) {
+        return own.map((c) => ({
+          listingUrl: c.listingUrl,
+          source: c.source,
+          address: c.address,
+          price: c.price,
+          facadeImageUrl: c.facadeImageUrl,
+          allImageUrls: c.allImageUrls,
+        }));
+      }
+    } catch (e) {
+      console.error(`[portals] own-site discovery failed for ${domain}: ${(e as Error).message}`);
+    }
+  }
+  // Fall through to legacy SerpApi/portal discovery only when own-site yields nothing.
 
   // Build discovery queries (agency name + phone are the strongest keys).
   const queries: string[] = [];

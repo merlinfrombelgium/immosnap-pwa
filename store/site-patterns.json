@@ -1,0 +1,371 @@
+{
+  "version": 1,
+  "updatedAt": "2026-06-29T20:47:38.590Z",
+  "patterns": {
+    "zabun-skarabee": {
+      "fingerprint": "zabun-skarabee",
+      "domains": [
+        "woonvast.be",
+        "berno.be"
+      ],
+      "detection": {
+        "label": "Zabun/Skarabee",
+        "signals": [
+          "zabun host"
+        ],
+        "lastSeenAt": "2026-06-29T20:47:38.589Z"
+      },
+      "discovery": {
+        "mode": "sitemap-static",
+        "lastVerifiedAt": "2026-06-29T20:47:38.589Z"
+      },
+      "fields": {
+        "address": {
+          "preferred": [
+            "title-street",
+            "jsonld-address"
+          ],
+          "learned": [
+            {
+              "strategy": "jsonld-address",
+              "confidence": 1,
+              "sampleCount": 32,
+              "lastVerifiedAt": "2026-06-29T20:47:30.779Z"
+            },
+            {
+              "strategy": "title-street",
+              "confidence": 1,
+              "sampleCount": 18,
+              "lastVerifiedAt": "2026-06-29T20:47:38.589Z"
+            }
+          ]
+        },
+        "price": {
+          "preferred": [
+            "largest-euro-text",
+            "jsonld-offer-price"
+          ],
+          "learned": [
+            {
+              "strategy": "jsonld-offer-price",
+              "confidence": 1,
+              "sampleCount": 32,
+              "lastVerifiedAt": "2026-06-29T20:47:30.779Z"
+            },
+            {
+              "strategy": "largest-euro-text",
+              "confidence": 0.6599999999999999,
+              "sampleCount": 10,
+              "lastVerifiedAt": "2026-06-29T20:47:38.444Z"
+            }
+          ]
+        },
+        "images": {
+          "preferred": [
+            "gallery-regex",
+            "og-image"
+          ],
+          "learned": [
+            {
+              "strategy": "gallery-regex",
+              "confidence": 1,
+              "sampleCount": 50,
+              "lastVerifiedAt": "2026-06-29T20:47:38.589Z"
+            }
+          ]
+        }
+      },
+      "confidence": 1,
+      "sampleCount": 142,
+      "lastVerifiedAt": "2026-06-29T20:47:38.589Z",
+      "exceptions": [
+        {
+          "at": "2026-06-29T20:45:29.494Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185375"
+        },
+        {
+          "at": "2026-06-29T20:45:29.657Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185395"
+        },
+        {
+          "at": "2026-06-29T20:45:29.666Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185391"
+        },
+        {
+          "at": "2026-06-29T20:47:08.166Z",
+          "field": "images",
+          "reason": "cached strategy drift: og-image",
+          "domain": "woonvast.be",
+          "url": "https://www.woonvast.be/detail/te-koop-woning-opwijk/7590311"
+        },
+        {
+          "at": "2026-06-29T20:45:29.474Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185382"
+        },
+        {
+          "at": "2026-06-29T20:45:29.494Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185375"
+        },
+        {
+          "at": "2026-06-29T20:45:29.657Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185395"
+        },
+        {
+          "at": "2026-06-29T20:45:29.666Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185391"
+        },
+        {
+          "at": "2026-06-29T20:45:29.474Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185382"
+        },
+        {
+          "at": "2026-06-29T20:45:29.494Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185375"
+        },
+        {
+          "at": "2026-06-29T20:45:29.657Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185395"
+        },
+        {
+          "at": "2026-06-29T20:45:29.666Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185391"
+        },
+        {
+          "at": "2026-06-29T20:45:29.474Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185382"
+        },
+        {
+          "at": "2026-06-29T20:45:29.494Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185375"
+        },
+        {
+          "at": "2026-06-29T20:45:29.657Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185395"
+        },
+        {
+          "at": "2026-06-29T20:45:29.666Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185391"
+        },
+        {
+          "at": "2026-06-29T20:45:29.474Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185382"
+        },
+        {
+          "at": "2026-06-29T20:45:29.494Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185375"
+        },
+        {
+          "at": "2026-06-29T20:45:29.657Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185395"
+        },
+        {
+          "at": "2026-06-29T20:45:29.666Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185391"
+        },
+        {
+          "at": "2026-06-29T20:47:08.166Z",
+          "field": "images",
+          "reason": "cached strategy drift: og-image",
+          "domain": "woonvast.be",
+          "url": "https://www.woonvast.be/detail/te-koop-woning-opwijk/7590311"
+        },
+        {
+          "at": "2026-06-29T20:47:38.410Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185382"
+        },
+        {
+          "at": "2026-06-29T20:47:38.417Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185375"
+        },
+        {
+          "at": "2026-06-29T20:47:38.482Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185391"
+        },
+        {
+          "at": "2026-06-29T20:47:38.589Z",
+          "field": "price",
+          "reason": "price shortfall",
+          "domain": "berno.be",
+          "url": "https://berno.be/nl/aanbod/4180484/exclusieve-ben-nieuwbouwappartementen-in-het-hart-van-oudegem-luxueus-wonen-aan-6percent-btw-(onder-voorwaarden)-in-9200-oudegem/4185395"
+        }
+      ]
+    },
+    "era-drupal": {
+      "fingerprint": "era-drupal",
+      "domains": [
+        "era.be"
+      ],
+      "detection": {
+        "label": "Era/Drupal",
+        "signals": [
+          "era domain",
+          "drupal generator"
+        ],
+        "lastSeenAt": "2026-06-29T20:47:35.920Z"
+      },
+      "discovery": {
+        "mode": "sitemap-static",
+        "lastVerifiedAt": "2026-06-29T20:47:35.920Z"
+      },
+      "fields": {
+        "address": {
+          "preferred": [
+            "jsonld-address"
+          ],
+          "learned": [
+            {
+              "strategy": "jsonld-address",
+              "confidence": 0.8199999999999998,
+              "sampleCount": 4,
+              "lastVerifiedAt": "2026-06-29T20:47:35.920Z"
+            }
+          ]
+        },
+        "price": {
+          "preferred": [
+            "jsonld-offer-price"
+          ],
+          "learned": [
+            {
+              "strategy": "jsonld-offer-price",
+              "confidence": 0.8199999999999998,
+              "sampleCount": 4,
+              "lastVerifiedAt": "2026-06-29T20:47:35.920Z"
+            }
+          ]
+        },
+        "images": {
+          "preferred": [
+            "gallery-regex"
+          ],
+          "learned": [
+            {
+              "strategy": "gallery-regex",
+              "confidence": 0.8199999999999998,
+              "sampleCount": 4,
+              "lastVerifiedAt": "2026-06-29T20:47:35.920Z"
+            }
+          ]
+        }
+      },
+      "confidence": 0.8600000000000003,
+      "sampleCount": 12,
+      "lastVerifiedAt": "2026-06-29T20:47:35.920Z",
+      "exceptions": []
+    }
+  },
+  "domains": {
+    "woonvast.be": {
+      "fingerprint": "zabun-skarabee",
+      "preferred": {
+        "address": [
+          "jsonld-address"
+        ],
+        "price": [
+          "jsonld-offer-price"
+        ],
+        "images": [
+          "gallery-regex",
+          "og-image"
+        ]
+      },
+      "lastVerifiedAt": "2026-06-29T20:47:30.779Z"
+    },
+    "era.be": {
+      "fingerprint": "era-drupal",
+      "preferred": {
+        "address": [
+          "jsonld-address"
+        ],
+        "price": [
+          "jsonld-offer-price"
+        ],
+        "images": [
+          "gallery-regex"
+        ]
+      },
+      "lastVerifiedAt": "2026-06-29T20:47:35.920Z"
+    },
+    "berno.be": {
+      "fingerprint": "zabun-skarabee",
+      "preferred": {
+        "address": [
+          "title-street"
+        ],
+        "price": [
+          "largest-euro-text"
+        ],
+        "images": [
+          "gallery-regex"
+        ]
+      },
+      "lastVerifiedAt": "2026-06-29T20:47:38.589Z"
+    }
+  }
+}
