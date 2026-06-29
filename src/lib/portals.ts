@@ -1,5 +1,5 @@
 import { ENV } from "./env.js";
-import { getBrowser, newPreparedPage, sleep } from "./browser.js";
+import { getBrowser, newPreparedPage, sleep, renderPage } from "./browser.js";
 import type { Page } from "puppeteer-core";
 import { getImmowebListing, resolveImmowebAgency } from "../portals/immoweb.js";
 import { getSpottoListing, resolveSpottoMakelaar } from "../portals/spotto.js";
@@ -99,7 +99,95 @@ interface Classified {
   priority: number; // lower = better (portals that render well first)
 }
 
-function classify(url: string, domain: string | null): Classified {
+/** Bare host (no leading www), lowercased. */
+function hostOf(u: string): string | null {
+  try {
+    return new URL(u).host.replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+// Real-estate aggregators we already handle natively — never treat these as an
+// agency's "own" site.
+const PORTAL_HOST = /(?:^|\.)(immoweb|zimmo|spotto|realo|immoscoop|immovlan|hebbes|logic-immo|zoekhuis|biddit)\.be$/i;
+// Socials / search / review sites that surface in discovery but are never listings.
+const NON_SITE_HOST =
+  /(?:^|\.)(facebook|instagram|tiktok|youtube|youtu|linkedin|twitter|pinterest|google|gstatic|wikipedia|trustpilot|tripadvisor|booking|yelp|paruvendu|immo-vlaanderen)\.[a-z.]+$/i;
+
+/** Strip tracking query/hash from an own-site URL when the id lives in the path. */
+function cleanOwnUrl(u: string): string {
+  // Normalise scheme + www so http/https and www/non-www variants of the same
+  // listing dedupe to one candidate (own-site discovery surfaces both forms).
+  const normed = u.replace(/^http:\/\//i, "https://").replace(/^(https:\/\/)www\./i, "$1");
+  const hashless = normed.split("#")[0];
+  if (/\/\d{4,}(?:[/?]|$)/.test(hashless)) return hashless.replace(/\?.*$/, "").replace(/\/+$/, "");
+  return hashless; // id likely lives in the query string — keep it
+}
+
+/** A path segment that reads like a property description (multi-word slug). */
+function isRichSlug(seg: string): boolean {
+  return (seg.match(/-/g) || []).length >= 3 || seg.length >= 25;
+}
+
+// For-sale keyword as a WHOLE path segment (own-CRM routing token).
+const KW_SEG =
+  /^(?:te-koop|te_koop|tekoop|te-huur|aanbod|woning|woningen|panden|eigendommen|properties|property|detail|pand|huis|appartement|villa|object|zoekertje)$/i;
+
+/** A non-portal URL that looks like a single listing/detail page (own CRM). */
+function looksLikeOwnListing(u: string): boolean {
+  // keyword somewhere in the path (any CRM route carries one)
+  const hasKeyword =
+    /\/(?:detail|te-koop|te_koop|tekoop|woning|woningen|aanbod|eigendom|eigendommen|pand|panden|property|properties|zoekertje|object|immo|huis|appartement|villa|listing|estate|vastgoed|realisatie|projecten?)\b/i.test(
+      u
+    );
+  if (!hasKeyword) return false;
+  // (a) explicit numeric listing id in path or query (Zabun/Skarabee, Whise, …)
+  const hasId = /\/(\d{4,})(?:[/?#.]|$)/.test(u) || /[?&](?:id|ref|reference|propertyid)=\d{3,}/i.test(u);
+  if (hasId) return true;
+  // (b) idless CRM (e.g. Era/Drupal): /te-koop/<town>/<type>/<rich-description-slug>.
+  // Require real depth + a description slug at the end so SEO/category stubs
+  // (e.g. /detail/te-koop-woning-<town>) are NOT mistaken for listings.
+  let segs: string[];
+  try {
+    segs = new URL(u).pathname.replace(/\/+$/, "").split("/").filter(Boolean);
+  } catch {
+    return false;
+  }
+  if (segs.length < 4) return false;
+  const kwIdx = segs.findIndex((s) => KW_SEG.test(s));
+  const last = segs[segs.length - 1] || "";
+  return kwIdx >= 0 && kwIdx < segs.length - 2 && isRichSlug(last);
+}
+
+/** A non-portal URL that looks like the agency's own for-sale index/overview. */
+function looksLikeOwnIndex(u: string): boolean {
+  let segs: string[];
+  try {
+    segs = new URL(u).pathname.replace(/\/+$/, "").split("/").filter(Boolean);
+  } catch {
+    return false;
+  }
+  if (!segs.length) return false;
+  if (/\d{4,}/.test(segs.join("/"))) return false; // detail pages carry ids
+  const kwIdx = segs.findIndex((s) =>
+    /^(?:te-koop|te_koop|tekoop|te-huur|aanbod(?:-te-koop)?|koopwoningen|te-koop-aanbod|properties|eigendommen|panden|ons-aanbod|for-sale)$/i.test(
+      s
+    )
+  );
+  if (kwIdx < 0) return false;
+  // Index = a for-sale root followed only by short town/type filters (no rich
+  // description slug, which would make it a detail page).
+  return segs.slice(kwIdx + 1).every((s) => !isRichSlug(s));
+}
+
+/**
+ * Classify a discovery URL.
+ * `domain` is the agency's configured website (if any) and `agencyToken` is its
+ * name reduced to [a-z0-9]; either is used to recognise the agency's OWN domain
+ * so we keep (not discard) listings hosted on the agency's own site/CRM.
+ */
+function classify(url: string, domain: string | null, agencyToken: string | null = null): Classified {
   const u = url;
   // zimmo listing detail: /nl/<town-zip>/te-koop/<type>/<CODE>/
   if (/zimmo\.be\/(?:nl|fr)\/[a-z0-9-]+\/(?:te-koop|a-vendre)\/[a-z]+\/[A-Z0-9]{4,}/i.test(u))
@@ -121,6 +209,24 @@ function classify(url: string, domain: string | null): Classified {
   // realo listing detail
   if (/realo\.be\/(?:nl|fr|en)\/[a-z0-9-]+\/\d{6,}/i.test(u))
     return { kind: "listing", source: "realo", url: u, priority: 2 };
+
+  // AGENCY OWN-SITE (additional source, lower priority than portals).
+  // When discovery surfaces a detail/index page on a host that is NOT a known
+  // portal, treat it as the agency's own listing source so we no longer discard it.
+  const host = hostOf(u);
+  if (host && !PORTAL_HOST.test(host) && !NON_SITE_HOST.test(host)) {
+    const flat = host.replace(/[^a-z0-9]/g, "");
+    const matchesAgency = !!(agencyToken && agencyToken.length >= 4 && flat.includes(agencyToken));
+    const matchesDomain = !!(domain && (host === domain || host.endsWith("." + domain) || domain.endsWith("." + host)));
+    const trusted = matchesAgency || matchesDomain;
+    if (looksLikeOwnListing(u))
+      return { kind: "listing", source: "agency", url: cleanOwnUrl(u), priority: trusted ? 5 : 6 };
+    // Only follow an index/overview page if it is plausibly THIS agency's site,
+    // to avoid scraping unrelated `/te-koop` pages.
+    if (trusted && looksLikeOwnIndex(u))
+      return { kind: "index", source: "agency", url: u, priority: 5 };
+  }
+
   return { kind: "ignore", source: "", url: u, priority: 9 };
 }
 
@@ -262,6 +368,128 @@ function parsePrice(d: ScrapeData): string | null {
   return m ? m[0].replace(/\s+/g, " ").trim() : null;
 }
 
+/* ----------------------- agency own-site (generic) extraction --------------- */
+
+// Photo hosts used by Belgian agency CRMs (Whise/Storagewhise, Skarabee/Zabun,
+// immo-connect) plus generic image extensions. Used to keep the gallery on an
+// agency's OWN listing page (these are NOT matched by listingImages()).
+const OWN_PHOTO =
+  /\.(?:jpe?g|webp|png)(?:[?#]|$)/i;
+const OWN_PHOTO_HOST =
+  /zabun\.be|skarabee|storagewhise\.eu|whise\.eu|immo-connect\.be|cloudfront\.net|cloudinary|akamai|\bcdn\b|FileStore\.ashx|fileformat=jpe?g/i;
+
+/** Harvest listing photos from an agency own-site page (browser DOM image set). */
+function ownSiteImages(images: string[]): string[] {
+  const byKey = new Map<string, string>();
+  const width = (x: string) => Number(/[?&](?:width|w)=(\d+)/i.exec(x)?.[1] || 0);
+  for (const raw0 of images) {
+    const raw = raw0 ? raw0.replace(/&amp;/gi, "&") : raw0;
+    if (!raw || raw.startsWith("data:") || !/^https?:\/\//i.test(raw)) continue;
+    if (IMG_EXCLUDE.test(raw)) continue;
+    if (!OWN_PHOTO.test(raw) && !OWN_PHOTO_HOST.test(raw)) continue;
+    // Dedupe key: the Zabun/Skarabee content reference, else the path sans query.
+    const ref = /[?&]reference=([0-9a-f]+)/i.exec(raw)?.[1];
+    const key = ref || raw.split("?")[0];
+    const prev = byKey.get(key);
+    if (!prev || width(raw) > width(prev)) byKey.set(key, raw);
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Listing street address from page headings. On Skarabee/Zabun/Whise own-sites
+ * the JSON-LD PostalAddress is the AGENCY office (wrong for geo-ranking), so we
+ * take the address from og:title / <title> / body text instead.
+ */
+function ownSiteAddress(d: ScrapeData): string | null {
+  const heads = [d.ogTitle, d.title].filter(Boolean) as string[];
+  for (const head of heads) {
+    // Address is usually the trailing segment after " - " / "|" separators.
+    const segs = head.split(/\s*[|–—]\s*|\s-\s/).map((s) => s.trim()).filter(Boolean);
+    for (const seg of [...segs.reverse(), head]) {
+      const m = STREET.exec(seg);
+      if (m && !/\s-\s/.test(m[1])) return `${m[1].trim()}, ${m[2]} ${m[3].trim()}`;
+    }
+  }
+  const m = STREET.exec(d.text || "");
+  if (m) return `${m[1].trim()}, ${m[2]} ${m[3].trim()}`;
+  // town-only fallback ("... in <Town>")
+  const t = /\bin\s+([A-Z][a-zà-ü\-]+(?:\s[A-Z][a-zà-ü\-]+)?)\b/.exec(heads.join(" "));
+  return t ? t[1].trim() : null;
+}
+
+/** Scrape an agency own-site listing into the shared Candidate fields. */
+async function getOwnSiteListing(url: string): Promise<{
+  address: string | null;
+  price: string | null;
+  facadeImageUrl: string | null;
+  allImageUrls: string[];
+}> {
+  const d = await scrapePage(url, { scrolls: 5 });
+  const imgs = ownSiteImages(d.images);
+  const og = d.ogImage ? d.ogImage.replace(/&amp;/gi, "&") : null;
+  const facade = og && !IMG_EXCLUDE.test(og) && (OWN_PHOTO.test(og) || OWN_PHOTO_HOST.test(og)) ? og : imgs[0] || null;
+  // Make sure the og facade is also part of the gallery (deduped by reference).
+  const gallery = facade && !imgs.includes(facade) ? [facade, ...imgs] : imgs;
+  return {
+    address: ownSiteAddress(d),
+    price: parsePrice(d),
+    facadeImageUrl: facade,
+    allImageUrls: gallery.slice(0, 12),
+  };
+}
+
+/**
+ * Render an agency's own for-sale index and harvest every own-listing detail URL
+ * from the full HTML (anchors AND embedded card data) — the visible page may only
+ * paginate ~13 cards while the model carries the whole set. Returns clean URLs.
+ */
+async function expandOwnSiteIndex(indexUrl: string): Promise<string[]> {
+  const host = hostOf(indexUrl);
+  if (!host) return [];
+  let html = "";
+  try {
+    ({ html } = await renderPage(indexUrl, { settle: 3500, retries: 2, timeout: 55_000, scroll: 10 }));
+  } catch (e) {
+    console.error(`[portals] own-index render failed ${indexUrl}: ${(e as Error).message}`);
+    return [];
+  }
+  const decoded = html.replace(/&amp;/gi, "&");
+  const esc = host.replace(/\./g, "\\.");
+  const found = new Set<string>();
+  // absolute on-host URLs anywhere in the markup/JSON
+  for (const m of decoded.matchAll(new RegExp(`https?://(?:www\\.)?${esc}/[^"'\\s)<>\\\\]+`, "gi"))) found.add(m[0]);
+  // root-relative hrefs
+  for (const m of decoded.matchAll(/(?:href|url)["']?\s*[:=]\s*["'](\/[^"'\s)<>\\]+)["']/gi))
+    found.add(`https://${host}${m[1]}`);
+  const out = new Set<string>();
+  for (const raw of found) if (looksLikeOwnListing(raw)) out.add(cleanOwnUrl(raw));
+  return [...out];
+}
+
+/* ------------------------------ town helpers -------------------------------- */
+
+function normTownSlug(t?: string | null): string | null {
+  if (!t) return null;
+  const s = t
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  return s || null;
+}
+
+/** True when a listing URL's path carries the town slug (own-site detail URLs do). */
+function urlInTown(url: string, townNorm: string): boolean {
+  let path = url;
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    /* keep raw */
+  }
+  return path.toLowerCase().replace(/[^a-z0-9]/g, "").includes(townNorm);
+}
+
 /* --------------------------------- Resolver --------------------------------- */
 
 export async function resolveCandidates(
@@ -271,6 +499,8 @@ export async function resolveCandidates(
   const maxCandidates = opts.maxCandidates ?? 10;
   const domain = siteDomain(q.website);
   const agency = (q.agency || "").trim();
+  const agencyToken = agency.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const townNorm = normTownSlug(q.town);
 
   // Build discovery queries (agency name + phone are the strongest keys).
   const queries: string[] = [];
@@ -288,7 +518,7 @@ export async function resolveCandidates(
   const seen = new Set<string>();
   const classified: Classified[] = [];
   for (const l of links) {
-    const c = classify(l, domain);
+    const c = classify(l, domain, agencyToken);
     if (c.kind === "ignore" || seen.has(c.url)) continue;
     seen.add(c.url);
     classified.push(c);
@@ -296,11 +526,11 @@ export async function resolveCandidates(
 
   // Expand agency / index pages into listing detail URLs.
   const expanded: Classified[] = [];
-  const containers = classified.filter((c) => c.kind === "agency" || c.kind === "index").slice(0, 2);
+  const containers = classified.filter((c) => c.kind === "agency" || c.kind === "index").slice(0, 3);
   for (const ap of containers) {
     if (ap.source === "immoweb") {
       for (const card of await resolveImmowebAgency(ap.url)) {
-        const c = classify(card.url, domain);
+        const c = classify(card.url, domain, agencyToken);
         if (c.kind === "listing" && !seen.has(c.url)) {
           seen.add(c.url);
           expanded.push(c);
@@ -311,7 +541,19 @@ export async function resolveCandidates(
 
     if (ap.source === "spotto") {
       for (const card of await resolveSpottoMakelaar(ap.url)) {
-        const c = classify(card.url, domain);
+        const c = classify(card.url, domain, agencyToken);
+        if (c.kind === "listing" && !seen.has(c.url)) {
+          seen.add(c.url);
+          expanded.push(c);
+        }
+      }
+      continue;
+    }
+
+    if (ap.source === "agency") {
+      // Agency own-site index: harvest the full detail-link set from the HTML.
+      for (const url of await expandOwnSiteIndex(ap.url)) {
+        const c = classify(url, domain, agencyToken);
         if (c.kind === "listing" && !seen.has(c.url)) {
           seen.add(c.url);
           expanded.push(c);
@@ -322,7 +564,7 @@ export async function resolveCandidates(
 
     const d = await scrapePage(ap.url, { scrolls: 6 });
     for (const href of d.links) {
-      const c = classify(href, domain);
+      const c = classify(href, domain, agencyToken);
       if (c.kind === "listing" && !seen.has(c.url)) {
         seen.add(c.url);
         expanded.push(c);
@@ -330,9 +572,30 @@ export async function resolveCandidates(
     }
   }
 
-  let listings = [...classified.filter((c) => c.kind === "listing"), ...expanded];
-  listings.sort((a, b) => a.priority - b.priority);
-  listings = listings.slice(0, maxCandidates);
+  // Split portal candidates (immoweb/spotto/zimmo/realo) from agency own-site ones.
+  const all = [...classified.filter((c) => c.kind === "listing"), ...expanded];
+  const portalListings = all.filter((c) => c.source !== "agency").sort((a, b) => a.priority - b.priority);
+  let ownListings = all.filter((c) => c.source === "agency").sort((a, b) => a.priority - b.priority);
+
+  // Own-site detail URLs carry the town slug, while the agency index lists every
+  // town. When a town is known, narrow the own-site set to it (portals are already
+  // town-targeted by the SerpApi query, so they are left untouched).
+  if (townNorm) {
+    const inTown = ownListings.filter((c) => urlInTown(c.url, townNorm));
+    if (inTown.length) ownListings = inTown;
+  }
+
+  // Portals rank first (they render best); own-site is the additional source.
+  // When a town is known the own-site set is already narrowed to a small in-town
+  // list, so include it fully and top up with portals. When no town is known,
+  // keep own-site a minority so portals stay the majority (don't break that path).
+  const ownCap = townNorm ? ownListings.length : Math.ceil(maxCandidates / 3);
+  const ownTake = Math.min(ownListings.length, ownCap, maxCandidates);
+  const portalTake = Math.min(portalListings.length, maxCandidates - ownTake);
+  let listings = [
+    ...portalListings.slice(0, portalTake),
+    ...ownListings.slice(0, maxCandidates - portalTake),
+  ].slice(0, maxCandidates);
 
   // Scrape each listing for images / address / price.
   const out: Candidate[] = [];
@@ -359,6 +622,21 @@ export async function resolveCandidates(
         price: detail.price,
         facadeImageUrl: detail.primaryImage,
         allImageUrls: detail.images.slice(0, 12),
+      });
+      continue;
+    }
+
+    if (c.source === "agency") {
+      // Agency own-site / CRM listing page: generic detail scrape with the
+      // CRM-aware image harvester + heading-based address (NOT JSON-LD office).
+      const detail = await getOwnSiteListing(c.url);
+      out.push({
+        listingUrl: c.url,
+        source: c.source,
+        address: detail.address,
+        price: detail.price,
+        facadeImageUrl: detail.facadeImageUrl,
+        allImageUrls: detail.allImageUrls,
       });
       continue;
     }
