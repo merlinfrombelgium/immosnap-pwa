@@ -24,7 +24,7 @@ import { scoreCandidate } from "./imageMatch.js";
 const CONFIDENT = 0.7; // >= this on the top candidate => a confident match
 const TOWN_CANDIDATE_CAP = 60; // evaluate the whole town set (Dendermonde ~53)
 const NO_TOWN_CANDIDATE_CAP = 24; // when town is unknown, cap the vision work
-const SCORE_CONCURRENCY = 6; // parallel facade vision calls
+const SCORE_CONCURRENCY = 12; // parallel facade vision calls (was 6; perf: halves wall time on a full town sweep)
 const SCORE_TIMEOUT_MS = 30_000; // hard cap per candidate so a straggler cannot stall the run
 
 /** Resolve `p`, or `fallback` if it does not settle within `ms`. */
@@ -104,6 +104,14 @@ export interface MatchCandidate {
 
 export type MatchKind = "confident" | "candidates" | "none";
 
+export interface MatchTimings {
+  ocrMs: number;
+  geoMs: number;
+  discoverMs: number;
+  visionMs: number;
+  totalMs: number;
+}
+
 export interface MatchResult {
   agency: string | null;
   phone: string | null;
@@ -113,6 +121,7 @@ export interface MatchResult {
   text: string;
   matchKind: MatchKind;
   candidates: MatchCandidate[];
+  timings: MatchTimings;
   debug: {
     crm: string | null;
     domain: string | null;
@@ -125,6 +134,10 @@ export interface MatchResult {
   };
 }
 
+function zeroTimings(): MatchTimings {
+  return { ocrMs: 0, geoMs: 0, discoverMs: 0, visionMs: 0, totalMs: 0 };
+}
+
 function emptyResult(partial: Partial<MatchResult>): MatchResult {
   return {
     agency: null,
@@ -135,6 +148,7 @@ function emptyResult(partial: Partial<MatchResult>): MatchResult {
     text: "",
     matchKind: "none",
     candidates: [],
+    timings: zeroTimings(),
     debug: {
       crm: null,
       domain: null,
@@ -149,30 +163,55 @@ function emptyResult(partial: Partial<MatchResult>): MatchResult {
   };
 }
 
-export async function matchImage(input: MatchInput): Promise<MatchResult> {
+/**
+ * Phase A: OCR -> resolve agency -> town -> agency listings -> filtered pool.
+ * Everything up to (but not including) the per-candidate scoring loop, which is
+ * the expensive part. Split out so the server can return this fast and score
+ * progressively (perf fix, see ZIM-287 plan section 3.3).
+ */
+export interface DiscoverResult {
+  agency: { name: string; domain: string; crm: string } | null;
+  phone: string | null;
+  town: string | null;
+  townSource: MatchResult["debug"]["townSource"];
+  website: string | null;
+  ref: string | null;
+  text: string;
+  pool: AgencyListing[];
+  queryB64: string | null;
+  listingsTotal: number;
+  fromCache: boolean;
+  cacheDate: string | null;
+  timings: Pick<MatchTimings, "ocrMs" | "geoMs" | "discoverMs">;
+  note: string;
+}
+
+export async function discoverCandidates(input: MatchInput): Promise<DiscoverResult> {
   // 1. OCR the sign (agency name + phone). Phone is the resolution key.
+  const ocrStart = Date.now();
   const ocr = await ocrSignBuffer(input.imageBuffer);
+  const ocrMs = Date.now() - ocrStart;
 
   // 2. Resolve agency by phone (fallback: printed website / name).
+  const discoverStart = Date.now();
   const agency = await resolveAgency({ phone: ocr.phone, name: ocr.agency, website: ocr.website });
   if (!agency) {
-    return emptyResult({
-      agency: ocr.agency,
+    return {
+      agency: null,
       phone: ocr.phone,
+      town: null,
+      townSource: "none",
       website: ocr.website,
       ref: ocr.ref,
       text: ocr.text,
-      debug: {
-        crm: null,
-        domain: null,
-        townSource: "none",
-        listingsTotal: 0,
-        candidatesEvaluated: 0,
-        fromCache: false,
-        cacheDate: null,
-        note: "could not resolve agency from phone/name/website on the sign",
-      },
-    });
+      pool: [],
+      queryB64: null,
+      listingsTotal: 0,
+      fromCache: false,
+      cacheDate: null,
+      timings: { ocrMs, geoMs: 0, discoverMs: Date.now() - discoverStart },
+      note: "could not resolve agency from phone/name/website on the sign",
+    };
   }
 
   // 3. Determine the town: sign first, then caller-provided, then GPS.
@@ -186,10 +225,12 @@ export async function matchImage(input: MatchInput): Promise<MatchResult> {
 
   // 4. Discover the agency's listings (served from the daily cache).
   const { listings, fromCache, date } = await getAgencyListings(agency);
+  const discoverMs = Date.now() - discoverStart;
 
   // GPS path: choose the nearest town the agency actually lists in, by geocoding
   // each unique town-slug centroid (Google) and taking the closest to the photo.
   // Robust to municipality-vs-deelgemeente slug mismatch (Dendermonde vs Baasrode).
+  const geoStart = Date.now();
   if (!town && input.gps) {
     const labels = [...new Set(listings.filter((l) => l.forSale && l.townLabel).map((l) => l.townLabel as string))];
     const entries: { label: string; lat: number; lon: number }[] = [];
@@ -200,6 +241,7 @@ export async function matchImage(input: MatchInput): Promise<MatchResult> {
     const near = nearestLabel({ lat: input.gps.lat, lon: input.gps.lon }, entries);
     if (near) { town = near; townSource = "gps"; }
   }
+  const geoMs = Date.now() - geoStart;
 
   // 5. Filter to for-sale in town (or all for-sale if town unknown).
   let pool: AgencyListing[] = town
@@ -210,7 +252,42 @@ export async function matchImage(input: MatchInput): Promise<MatchResult> {
 
   const queryB64 = await prepImage(input.imageBuffer, 1024);
 
-  // 6. Facade vision-match each candidate (contact sheet => one call per listing).
+  return {
+    agency: { name: agency.name, domain: agency.domain, crm: agency.crm },
+    phone: ocr.phone,
+    town: town ?? null,
+    townSource,
+    website: ocr.website ?? `https://${agency.domain}`,
+    ref: ocr.ref,
+    text: ocr.text,
+    pool,
+    queryB64,
+    listingsTotal: listings.length,
+    fromCache,
+    cacheDate: date,
+    timings: { ocrMs, geoMs, discoverMs },
+    note: "",
+  };
+}
+
+export interface ScoreResult {
+  candidates: MatchCandidate[];
+  matchKind: MatchKind;
+  visionMs: number;
+}
+
+/**
+ * Phase B: score the discovered pool (facade vision-match, or GPS-proximity
+ * rank when a photo location is known) and produce the honest verdict.
+ */
+export async function scoreAndRank(
+  pool: AgencyListing[],
+  input: Pick<MatchInput, "gps">,
+  queryB64: string | null
+): Promise<ScoreResult> {
+  const visionStart = Date.now();
+
+  // Facade vision-match each candidate (contact sheet => one call per listing).
   //    Run with bounded concurrency so a large home-town set (e.g. ~53 in
   //    Dendermonde) finishes in ~1 min instead of serially over several.
   let scoredCount = 0;
@@ -246,7 +323,9 @@ export async function matchImage(input: MatchInput): Promise<MatchResult> {
       }
     } else {
       try {
-        if (detail.imageUrls.length) {
+        if (!queryB64) {
+          candidate.reason = "no query image";
+        } else if (detail.imageUrls.length) {
           const res = await scoreCandidate(queryB64, detail.imageUrls, 6);
           candidate.confidence = Math.round(Math.max(0, Math.min(1, res.score)) * 100);
           candidate.reason = res.reason || "";
@@ -294,29 +373,62 @@ export async function matchImage(input: MatchInput): Promise<MatchResult> {
     }
   }
 
+  return { candidates: scored, matchKind, visionMs: Date.now() - visionStart };
+}
+
+/** Full pipeline: discover + score, in one call. What verify:gate and any
+ * non-streaming caller use; the server's /match route calls the two phases
+ * separately instead so it can return Phase A immediately (see server.ts). */
+export async function matchImage(input: MatchInput): Promise<MatchResult> {
+  const t0 = Date.now();
+  const disc = await discoverCandidates(input);
+
+  if (!disc.agency) {
+    return emptyResult({
+      agency: null,
+      phone: disc.phone,
+      website: disc.website,
+      ref: disc.ref,
+      text: disc.text,
+      timings: { ...disc.timings, visionMs: 0, totalMs: Date.now() - t0 },
+      debug: {
+        crm: null,
+        domain: null,
+        townSource: "none",
+        listingsTotal: 0,
+        candidatesEvaluated: 0,
+        fromCache: false,
+        cacheDate: null,
+        note: disc.note,
+      },
+    });
+  }
+
+  const { candidates, matchKind, visionMs } = await scoreAndRank(disc.pool, { gps: input.gps }, disc.queryB64);
   const max = input.maxCandidates ?? (matchKind === "confident" ? 4 : 8);
 
   return {
-    agency: agency.name,
-    phone: ocr.phone,
-    town: town ?? null,
-    website: ocr.website ?? `https://${agency.domain}`,
-    ref: ocr.ref,
-    text: ocr.text,
+    agency: disc.agency.name,
+    phone: disc.phone,
+    town: disc.town,
+    website: disc.website,
+    ref: disc.ref,
+    text: disc.text,
     matchKind,
-    candidates: scored.slice(0, max),
+    candidates: candidates.slice(0, max),
+    timings: { ...disc.timings, visionMs, totalMs: Date.now() - t0 },
     debug: {
-      crm: agency.crm,
-      domain: agency.domain,
-      townSource,
-      listingsTotal: listings.length,
-      candidatesEvaluated: pool.length,
-      fromCache,
-      cacheDate: date,
+      crm: disc.agency.crm,
+      domain: disc.agency.domain,
+      townSource: disc.townSource,
+      listingsTotal: disc.listingsTotal,
+      candidatesEvaluated: disc.pool.length,
+      fromCache: disc.fromCache,
+      cacheDate: disc.cacheDate,
       note:
         matchKind === "confident"
           ? "facade match above confidence threshold"
-          : town
+          : disc.town
             ? "no confident facade match; showing town candidates to confirm"
             : "no town (no GPS / sign town); showing best-effort candidates to confirm",
     },

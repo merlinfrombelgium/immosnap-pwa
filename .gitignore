@@ -5,3 +5,4 @@ proto/.env
 dist/
 debug/
 .cache/
+store/snaps/**
