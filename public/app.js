@@ -338,3 +338,124 @@ function render(data) {
   }
   resetBtn.hidden = false;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v10 enhancements: network-first SW registration, live build stamp, snap
+// history (from the server capture store), tap-to-enlarge lightbox, top snap btn.
+// ─────────────────────────────────────────────────────────────────────────────
+(() => {
+  // 1) Register the network-first service worker so fresh builds always win.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }
+
+  // 2) Live build stamp in the header + footer.
+  const chip = document.querySelector("#build-chip");
+  const foot = document.querySelector("#build-foot");
+  fetch("/version").then((r) => r.json()).then((v) => {
+    const label = v.label || `v${v.version || ""}`;
+    if (chip) chip.textContent = "build " + label;
+    if (foot) foot.textContent = "build " + label;
+  }).catch(() => {
+    if (chip) chip.textContent = "build ?";
+  });
+
+  // 3) Top snap button → identical pipeline as the hero camera.
+  const camTop = document.querySelector("#camera-top");
+  if (camTop) camTop.addEventListener("change", () => {
+    if (camTop.files[0]) { try { handleFile(camTop.files[0]); } catch {} camTop.value = ""; }
+  });
+
+  // 4) Lightbox: tap any photo to enlarge.
+  const lb = document.querySelector("#lightbox");
+  const lbImg = document.querySelector("#lightbox-img");
+  const lbClose = document.querySelector("#lightbox-close");
+  function openLightbox(src) {
+    if (!src || !lb || !lbImg) return;
+    lbImg.src = src;
+    lb.hidden = false;
+    lb.setAttribute("aria-hidden", "false");
+    document.body.classList.add("modal-open");
+  }
+  function closeLightbox() {
+    if (!lb) return;
+    lb.hidden = true;
+    lb.setAttribute("aria-hidden", "true");
+    lbImg.src = "";
+    document.body.classList.remove("modal-open");
+  }
+  if (lbClose) lbClose.addEventListener("click", closeLightbox);
+  if (lb) lb.addEventListener("click", (e) => { if (e.target === lb) closeLightbox(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeLightbox(); });
+
+  // Preview photo → enlarge.
+  const preview = document.querySelector("#preview-img");
+  if (preview) {
+    preview.style.cursor = "zoom-in";
+    preview.addEventListener("click", () => openLightbox(preview.src));
+  }
+  // Candidate facade photos → enlarge (event delegation; cards are dynamic).
+  const candWrap = document.querySelector("#candidates");
+  if (candWrap) candWrap.addEventListener("click", (e) => {
+    const img = e.target.closest && e.target.closest(".card-img img");
+    if (img && img.src) { e.preventDefault(); openLightbox(img.src); }
+  });
+
+  // 5) Snap history from the capture store.
+  const historySec = document.querySelector("#history");
+  const historyList = document.querySelector("#history-list");
+  const historyRefresh = document.querySelector("#history-refresh");
+  function fmtTime(iso) {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    } catch { return iso; }
+  }
+  async function loadHistory() {
+    if (!historyList) return;
+    try {
+      const r = await fetch("/captures?limit=30");
+      if (!r.ok) return;
+      const d = await r.json();
+      const items = d.items || [];
+      if (!items.length) { if (historySec) historySec.hidden = true; return; }
+      if (historySec) historySec.hidden = false;
+      historyList.innerHTML = "";
+      for (const it of items) {
+        const row = document.createElement("div");
+        row.className = "hist-item";
+        const top = it.top;
+        const line2 = top && top.address
+          ? `${top.address}${top.price ? " · " + top.price : ""}`
+          : (it.candidateCount ? `${it.candidateCount} candidate${it.candidateCount > 1 ? "s" : ""}` : "no match");
+        row.innerHTML = `
+          <img class="hist-thumb" src="${it.imageUrl}" alt="snap" loading="lazy" />
+          <div class="hist-meta">
+            <div class="hist-agency">${it.agency ? it.agency : "Agency not detected"}</div>
+            <div class="hist-sub">${line2}</div>
+            <div class="hist-foot">${fmtTime(it.ts)} · ${it.town || "?"} · ${it.ms != null ? it.ms + "ms" : ""}</div>
+          </div>`;
+        const thumb = row.querySelector(".hist-thumb");
+        thumb.style.cursor = "zoom-in";
+        thumb.addEventListener("click", () => openLightbox(it.imageUrl));
+        if (top && top.listingUrl) {
+          const meta = row.querySelector(".hist-meta");
+          meta.style.cursor = "pointer";
+          meta.addEventListener("click", () => window.open(top.listingUrl, "_blank", "noopener"));
+        }
+        historyList.appendChild(row);
+      }
+    } catch {}
+  }
+  if (historyRefresh) historyRefresh.addEventListener("click", loadHistory);
+
+  // 6) Refresh history right after each match completes (capture is server-side).
+  if (typeof render === "function") {
+    const __origRender = render;
+    // eslint-disable-next-line no-func-assign
+    render = function (data) { __origRender(data); setTimeout(loadHistory, 400); };
+  }
+
+  // Initial load.
+  loadHistory();
+})();
