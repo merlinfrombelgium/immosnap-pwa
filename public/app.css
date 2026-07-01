@@ -1,7 +1,7 @@
 :root{
   --bg:#0f1020; --panel:#191a2e; --panel-2:#21223b; --line:#2c2d4a;
   --txt:#eef0fb; --muted:#9aa0c4; --brand:#6d5efc; --brand-2:#9b8cff;
-  --ok:#37d39b; --shadow:0 10px 30px rgba(0,0,0,.35);
+  --ok:#37d39b; --warn:#e0b84a; --bad:#c65b5b; --shadow:0 10px 30px rgba(0,0,0,.35);
   --r:18px;
 }
 *{box-sizing:border-box}
@@ -11,19 +11,52 @@ body{
   background:radial-gradient(1200px 600px at 50% -10%,#22244a 0%,var(--bg) 55%);
   color:var(--txt); min-height:100dvh; -webkit-font-smoothing:antialiased;
 }
+
+/* ── topbar: brand + prominent build stamp + persistent snap control ───── */
 .topbar{
   display:flex; align-items:center; gap:14px; justify-content:space-between;
-  padding:16px 20px; max-width:760px; margin:0 auto; flex-wrap:wrap;
+  padding:14px 20px; max-width:760px; margin:0 auto; flex-wrap:wrap;
+  position:sticky; top:0; z-index:20; background:rgba(15,16,32,.88); backdrop-filter:blur(6px);
 }
-.brand{display:flex; align-items:center; gap:9px; font-weight:700; font-size:20px}
+.brand{display:flex; align-items:center; gap:9px; font-weight:700; font-size:20px; flex-wrap:wrap}
 .brand-mark{color:var(--brand-2); font-size:22px}
 .brand-name span{color:var(--brand-2)}
-.brand-tag{color:var(--muted); font-size:13px}
+.build-stamp{
+  font-weight:600; font-size:11px; color:var(--muted); background:var(--panel-2);
+  border:1px solid var(--line); border-radius:999px; padding:3px 10px; letter-spacing:.01em;
+}
+.top-snap-btn{
+  background:var(--brand); color:#fff; border:none; padding:9px 16px; border-radius:999px;
+  font-weight:700; font-size:14px; cursor:pointer; box-shadow:var(--shadow); flex:none;
+}
+.top-snap-btn:hover{background:#5a4cf0}
+.top-snap-btn:active{transform:translateY(1px)}
+
+/* ── tabbar (Scan / History) ────────────────────────────────────────────── */
+.tabbar{
+  display:flex; gap:8px; padding:6px; margin:0 auto 8px; max-width:720px;
+  border-radius:999px; background:var(--panel); border:1px solid var(--line);
+  box-shadow:var(--shadow); position:sticky; top:64px; z-index:15;
+}
+.tab{
+  flex:1; background:transparent; color:var(--muted); border:none; padding:9px 14px;
+  border-radius:999px; font-weight:650; font-size:14px; cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+}
+.tab:hover{background:rgba(155,140,255,.1)}
+.tab.is-active{background:var(--brand); color:#fff}
+.tab-count{
+  min-width:20px; padding:1px 7px; border-radius:999px; font-size:.76rem; font-weight:700;
+  background:rgba(255,255,255,.22); color:inherit;
+}
+.tab:not(.is-active) .tab-count{background:rgba(155,140,255,.16); color:var(--brand-2)}
+
 .wrap{max-width:760px; margin:0 auto; padding:8px 20px 40px}
+.view[hidden]{display:none}
 
 .hero{text-align:center; padding:18px 0 8px}
 .hero h1{font-size:clamp(28px,6vw,40px); margin:.2em 0 .15em; letter-spacing:-.02em}
-.sub{color:var(--muted); max-width:34ch; margin:0 auto 22px; line-height:1.5}
+.sub{color:var(--muted); max-width:36ch; margin:0 auto 22px; line-height:1.5}
 .sub strong{color:var(--brand-2)}
 
 .dropzone{
@@ -36,7 +69,6 @@ body{
 .dz-title{font-weight:650; margin-top:8px; font-size:17px}
 .dz-hint{color:var(--muted); font-size:13px; margin-top:4px}
 
-/* ── capture entry points: Take photo (camera) + Upload (gallery) ── */
 .capture-actions{display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:18px}
 .capture-btn{
   display:inline-flex; align-items:center; gap:8px; cursor:pointer;
@@ -49,8 +81,6 @@ body{
 .capture-primary:hover{background:#5a4cf0}
 .capture-secondary{background:var(--panel-2); color:var(--txt); border-color:var(--line)}
 .capture-secondary:hover{border-color:var(--brand)}
-/* Keep file inputs in the layout (not display:none) so iOS Safari always
-   fires the camera/file intent; they're just visually removed. */
 .visually-hidden{
   position:absolute !important; width:1px; height:1px; padding:0; margin:-1px;
   overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0;
@@ -62,42 +92,9 @@ body{
 .badge-ok{background:rgba(55,211,155,.15); color:var(--ok)}
 .link-btn{background:none; border:none; color:var(--brand-2); font-size:13px; cursor:pointer; text-decoration:underline; padding:0}
 
-.result{margin-top:18px}
-.preview-card{
-  display:flex; gap:16px; align-items:center; background:var(--panel); border:1px solid var(--line);
-  border-radius:var(--r); padding:14px; box-shadow:var(--shadow);
-}
-#preview-img{width:96px; height:96px; object-fit:cover; border-radius:12px; flex:none; background:#000}
-.read-label{color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em}
-.read-agency{font-size:24px; font-weight:750; margin:3px 0; letter-spacing:-.01em}
-.read-meta{color:var(--muted); font-size:14px; display:flex; gap:14px; flex-wrap:wrap}
-
-/* ── working-location panel ─────────────────────────────────────── */
-.loc{
-  margin-top:14px; background:var(--panel); border:1px solid var(--line);
-  border-radius:var(--r); padding:12px 14px; box-shadow:var(--shadow);
-}
-.loc-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
-.loc-addr{color:var(--muted); font-size:13px}
-.map-wrap{position:relative; margin:12px 0 4px; cursor:pointer}
-.map-static{height:180px; width:100%; border-radius:12px; overflow:hidden; background:var(--panel-2)}
-.map-static .leaflet-container{height:100%; width:100%; background:var(--panel-2)}
-/* belt-and-braces: the thumbnail never reacts to gestures, only a tap-through */
-.map-wrap .map-static *{pointer-events:none}
-.map-tap-hint{
-  position:absolute; right:10px; bottom:10px; z-index:500;
-  background:rgba(15,16,32,.82); color:var(--txt); font-size:12px; font-weight:600;
-  padding:5px 10px; border-radius:999px; pointer-events:none; border:1px solid var(--line);
-}
-.loc-actions{display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:8px}
-.loc-btn{
-  background:var(--panel-2); color:var(--txt); border:1px solid var(--line);
-  padding:9px 14px; border-radius:999px; font-weight:600; font-size:14px; cursor:pointer;
-}
-.loc-btn:hover{border-color:var(--brand)}
-.manual-form{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap}
+.manual-form{display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; justify-content:center}
 .manual-form input{
-  flex:1 1 220px; min-width:0; background:var(--bg); color:var(--txt);
+  flex:1 1 260px; max-width:360px; background:var(--panel-2); color:var(--txt);
   border:1px solid var(--line); border-radius:12px; padding:11px 13px; font-size:15px;
 }
 .manual-form input:focus{outline:none; border-color:var(--brand)}
@@ -107,35 +104,23 @@ body{
 }
 .primary-btn:hover{background:#5a4cf0}
 .primary-btn:disabled{opacity:.55; cursor:default}
-.ghost-btn{
-  background:transparent; color:var(--txt); border:1px solid var(--line);
-  padding:11px 18px; border-radius:12px; font-weight:600; font-size:15px; cursor:pointer;
-}
-.ghost-btn:hover{border-color:var(--brand)}
-.manual-hint{color:var(--muted); font-size:13px; margin-top:8px}
+.manual-hint{color:var(--muted); font-size:13px; margin-top:8px; text-align:center}
 
-/* ── adjust-location modal (the ONLY interactive map) ───────────── */
-body.modal-open{overflow:hidden}
-.modal{
-  position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center;
-  background:rgba(6,7,18,.72); padding:14px; backdrop-filter:blur(2px);
+.result{margin-top:18px}
+.preview-card{
+  display:flex; gap:16px; align-items:center; background:var(--panel); border:1px solid var(--line);
+  border-radius:var(--r); padding:14px; box-shadow:var(--shadow);
 }
-.modal[hidden]{display:none}
-.modal-card{
-  width:min(680px,100%); max-height:92dvh; display:flex; flex-direction:column;
-  background:var(--panel); border:1px solid var(--line); border-radius:var(--r);
-  box-shadow:var(--shadow); overflow:hidden;
-}
-.modal-head{padding:14px 16px 8px}
-.modal-head strong{font-size:17px}
-.modal-hint{display:block; color:var(--muted); font-size:13px; margin-top:2px}
-.modal-map{flex:1 1 auto; min-height:56vh; width:100%}
-.modal-map .leaflet-container{height:100%; width:100%}
-.modal-addr{padding:8px 16px 0; color:var(--brand-2); font-size:13px; min-height:16px}
-.modal-actions{display:flex; gap:10px; justify-content:flex-end; padding:14px 16px}
+#preview-img{width:96px; height:96px; object-fit:cover; border-radius:12px; flex:none; background:#000; cursor:zoom-in}
+.read-label{color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em}
+.read-agency{font-size:24px; font-weight:750; margin:3px 0; letter-spacing:-.01em}
+.read-meta{color:var(--muted); font-size:14px; display:flex; gap:14px; flex-wrap:wrap}
 
-.status{color:var(--muted); text-align:center; padding:18px 0; min-height:18px}
-.status.spin::before{content:"◌ "; }
+.status{color:var(--muted); text-align:center; padding:18px 0; min-height:18px; font-weight:600}
+.status.spin::before{content:"◌ "}
+.status.is-confident{color:var(--ok)}
+.status.is-candidates{color:var(--warn)}
+.status.is-none{color:var(--muted)}
 
 .candidates-head{display:flex; align-items:baseline; gap:10px; margin:18px 4px 10px; flex-wrap:wrap}
 .candidates-head h2{font-size:17px; margin:0}
@@ -148,11 +133,19 @@ body.modal-open{overflow:hidden}
   transition:.16s transform,.16s border-color,.16s box-shadow;
 }
 .card:hover{transform:translateY(-2px); border-color:var(--brand); box-shadow:var(--shadow)}
-.card-img{aspect-ratio:16/10; background:#000}
+.card.is-top{border-color:var(--ok)}
+.card-img{aspect-ratio:16/10; background:#000; cursor:zoom-in}
 .card-img img{width:100%; height:100%; object-fit:cover; display:block}
 .card-body{padding:12px 14px}
 .card-addr{font-weight:650}
 .card-price{color:var(--brand-2); font-weight:600; margin-top:3px; font-size:14px}
+.card-confidence{
+  display:inline-flex; margin-top:8px; font-size:12px; font-weight:700; padding:3px 9px; border-radius:999px;
+}
+.card-confidence.is-high{background:rgba(55,211,155,.15); color:var(--ok)}
+.card-confidence.is-mid{background:rgba(224,184,74,.16); color:var(--warn)}
+.card-confidence.is-low{background:rgba(198,91,91,.14); color:var(--bad)}
+.card-confidence.is-pending{background:var(--panel-2); color:var(--muted)}
 .card-cta{color:var(--muted); font-size:13px; margin-top:8px}
 
 .reset-btn{
@@ -161,3 +154,40 @@ body.modal-open{overflow:hidden}
 }
 .reset-btn:hover{background:#5a4cf0}
 .foot{text-align:center; color:var(--muted); font-size:12px; padding:24px}
+
+/* ── history ─────────────────────────────────────────────────────────── */
+.history-head{display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:18px 8px 8px}
+.history-title{margin:0}
+.history-empty{margin-top:18px; padding:28px 20px; text-align:center; color:var(--muted)}
+.history-list{display:grid; gap:12px; margin-top:12px}
+.history-card{
+  display:grid; grid-template-columns:72px minmax(0,1fr); gap:14px; padding:12px; border-radius:16px;
+  text-align:left; background:var(--panel); border:1px solid var(--line); box-shadow:var(--shadow);
+  color:var(--txt); align-items:center; cursor:pointer; font:inherit;
+}
+.history-card:hover{border-color:var(--brand)}
+.history-thumb{width:72px; height:72px; object-fit:cover; border-radius:12px; background:#000}
+.history-meta{min-width:0}
+.history-topline{display:flex; align-items:baseline; justify-content:space-between; gap:10px}
+.history-agency{font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.history-time{flex:none; font-size:.8rem; color:var(--muted)}
+.history-sub{margin:4px 0 8px; color:var(--muted); font-size:.88rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.history-badge{
+  display:inline-flex; padding:3px 9px; border-radius:999px; font-size:.76rem; font-weight:700;
+  background:var(--panel-2); color:var(--muted);
+}
+.history-badge.is-confident{background:rgba(55,211,155,.15); color:var(--ok)}
+.history-badge.is-candidates{background:rgba(224,184,74,.16); color:var(--warn)}
+
+/* ── lightbox: tap-to-enlarge, no dependency ────────────────────────────── */
+.lightbox{
+  position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center;
+  background:rgba(6,7,18,.88); padding:20px; cursor:zoom-out;
+}
+.lightbox[hidden]{display:none}
+.lightbox img{max-width:100%; max-height:100%; border-radius:12px; box-shadow:var(--shadow)}
+
+@media (max-width:520px){
+  .history-head{flex-direction:column}
+  .tabbar{top:58px}
+}
