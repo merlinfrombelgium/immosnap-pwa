@@ -1,7 +1,9 @@
 // ImmoSnap PWA front-end.
 // One "working location" (photo EXIF | device GPS | typed address | pinned point)
-// feeds the existing POST /match. Map display uses Leaflet (tiles only); all
-// geocoding / reverse-geocoding is Google, server-side (GET /geocode, /reverse).
+// feeds the existing POST /match. Map display uses Leaflet (tiles only, lazy-
+// loaded on first use); all geocoding / reverse-geocoding is Google, server-side
+// (GET /geocode, /reverse). /match returns fast (Phase A: agency/town/candidate
+// list) and the client polls GET /match/:snapId/scores for Phase B (confidence).
 
 const fileInput = document.querySelector("#file");
 const cameraInput = document.querySelector("#camera");
@@ -19,6 +21,7 @@ const candHead = document.querySelector("#cand-head");
 const candidates = document.querySelector("#candidates");
 const tpl = document.querySelector("#candidate-template");
 const resetBtn = document.querySelector("#reset");
+const savedBanner = document.querySelector("#saved-banner");
 
 // location panel
 const locBadge = document.querySelector("#loc-badge");
@@ -36,6 +39,22 @@ const modalAddr = document.querySelector("#modal-addr");
 const modalCancel = document.querySelector("#modal-cancel");
 const modalConfirm = document.querySelector("#modal-confirm");
 
+// topbar / tabs / history
+const topbarSnapBtn = document.querySelector("#topbar-snap");
+const tabbar = document.querySelector("#tabbar");
+const scanView = document.querySelector("#scan-view");
+const historyView = document.querySelector("#history-view");
+const historyList = document.querySelector("#history-list");
+const historyEmpty = document.querySelector("#history-empty");
+const historyCount = document.querySelector("#history-count");
+const historyTemplate = document.querySelector("#history-template");
+const clearHistoryButton = document.querySelector("#clear-history");
+
+// lightbox
+const lightbox = document.querySelector("#lightbox");
+const lightboxImg = document.querySelector("#lightbox-img");
+const lightboxClose = document.querySelector("#lightbox-close");
+
 // ── location state: every source kept separately, one "working" derived ──────
 let exifCoords = null, deviceCoords = null, manualCoords = null, pinCoords = null;
 let working = null, source = null;
@@ -43,6 +62,16 @@ let lastFile = null;
 let inlineMap = null, inlineMarker = null;
 let modalMap = null, modalMarker = null, modalPick = null;
 let addrToken = 0, modalAddrToken = 0;
+let leafletPromise = null;
+// id of the history record backing whatever is currently shown in the result
+// panel (a fresh scan or a reopened past one), so confirming a candidate
+// updates the right saved record and tells the server telemetry dataset.
+let activeScanId = null;
+let activeSnapId = null;
+let scorePollToken = 0;
+// the full result object behind whatever is currently rendered, so a Phase B
+// poll can merge in scores without re-deriving agency/phone/town from the DOM
+let currentResult = null;
 
 const SOURCE_LABEL = { photo: "photo EXIF", device: "device GPS", manual: "address", pin: "pinned" };
 const DEFAULT_CENTER = { lat: 50.8503, lon: 4.3517 }; // Brussels, when nothing else
@@ -75,9 +104,32 @@ function getDeviceGps() {
   });
 }
 
+// ── lazy Leaflet: only fetched once the map is actually needed, so the CDN
+// round-trip never sits on the critical path to first paint (perf fix). ──────
+function loadLeaflet() {
+  if (window.L) return Promise.resolve();
+  if (leafletPromise) return leafletPromise;
+  leafletPromise = new Promise((resolve, reject) => {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+    document.head.appendChild(link);
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Leaflet failed to load"));
+    document.head.appendChild(script);
+  });
+  return leafletPromise;
+}
+
 // ── inline DISPLAY-ONLY map (no drag/zoom/scroll); whole thing taps to modal ──
-function ensureInlineMap(lat, lon) {
-  if (!window.L) return;
+async function ensureInlineMap(lat, lon) {
+  try {
+    await loadLeaflet();
+  } catch {
+    return;
+  }
   try {
     if (!inlineMap) {
       inlineMap = L.map("map", {
@@ -126,14 +178,18 @@ function updateLocUI() {
 }
 
 // ── expandable modal map: the ONLY place the pin can move ─────────────────────
-function openModal() {
+async function openModal() {
   const center = isValid(working) ? working : DEFAULT_CENTER;
   modalPick = { lat: center.lat, lon: center.lon };
   modalAddr.textContent = "";
   modal.hidden = false;
   modal.setAttribute("aria-hidden", "false");
   document.body.classList.add("modal-open");
-  if (!window.L) return;
+  try {
+    await loadLeaflet();
+  } catch {
+    return;
+  }
   try {
     if (!modalMap) {
       modalMap = L.map("modal-map").setView([center.lat, center.lon], 16);
@@ -177,6 +233,15 @@ dropzone.addEventListener("drop", (e) => {
 fileInput.addEventListener("change", () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
 // "Take photo" (rear camera, capture="environment") feeds the identical pipeline.
 if (cameraInput) cameraInput.addEventListener("change", () => { if (cameraInput.files[0]) handleFile(cameraInput.files[0]); });
+
+// Persistent top-of-screen capture control: reachable from the initial view
+// AND after a result is shown, without scrolling back to the hero.
+if (topbarSnapBtn) {
+  topbarSnapBtn.addEventListener("click", () => {
+    setView("scan");
+    cameraInput.click();
+  });
+}
 
 gpsBtn.addEventListener("click", async () => {
   gpsBadge.textContent = "Getting device GPS…";
@@ -238,7 +303,9 @@ modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); }
 resetBtn.addEventListener("click", () => {
   result.hidden = true; hero.hidden = false; candidates.innerHTML = "";
   candHead.hidden = true; resetBtn.hidden = true; fileInput.value = ""; if (cameraInput) cameraInput.value = "";
+  savedBanner.hidden = true; savedBanner.textContent = "";
   exifCoords = deviceCoords = manualCoords = pinCoords = working = null; source = null;
+  activeScanId = null; activeSnapId = null; currentResult = null; scorePollToken++;
   mapWrap.hidden = true; manualForm.hidden = true; manualHint.hidden = true; manualInput.value = "";
   locBadge.textContent = "No location yet"; locBadge.className = "badge badge-muted"; locAddr.textContent = "";
   gpsBadge.textContent = "No location yet"; gpsBadge.className = "badge badge-muted";
@@ -247,14 +314,17 @@ resetBtn.addEventListener("click", () => {
 // ── process a chosen photo: resolve initial location, then run the match ──────
 async function handleFile(file) {
   lastFile = file;
+  setView("scan");
   hero.hidden = true;
   result.hidden = false;
   resetBtn.hidden = true;
   candidates.innerHTML = "";
   candHead.hidden = true;
   manualHint.hidden = true; manualForm.hidden = true;
+  savedBanner.hidden = true; savedBanner.textContent = "";
   rAgency.textContent = "—"; rPhone.textContent = ""; rTown.textContent = "";
   previewImg.src = URL.createObjectURL(file);
+  activeScanId = null; activeSnapId = null; currentResult = null; scorePollToken++;
 
   // fresh photo → fresh location decision
   exifCoords = deviceCoords = manualCoords = pinCoords = null;
@@ -297,6 +367,7 @@ async function runMatch() {
   statusEl.className = "status spin";
   candidates.innerHTML = "";
   candHead.hidden = true;
+  savedBanner.hidden = true; savedBanner.textContent = "";
 
   const fd = new FormData();
   fd.set("image", lastFile);
@@ -305,7 +376,14 @@ async function runMatch() {
   try {
     const res = await fetch("/match", { method: "POST", body: fd });
     if (!res.ok) throw new Error("server " + res.status);
-    render(await res.json());
+    const data = await res.json();
+    activeSnapId = data.snapId || null;
+    const rec = await saveScan(data, lastFile);
+    activeScanId = rec.id;
+    render(data);
+    if (data.matchKind === "pending" && data.snapId) {
+      pollScores(data.snapId);
+    }
   } catch {
     statusEl.className = "status";
     statusEl.textContent = "Something went wrong reading that photo. Try another.";
@@ -313,7 +391,39 @@ async function runMatch() {
   }
 }
 
+// Poll Phase B until scoring finishes, then merge scores into the shown result
+// and into the saved history record. Stale polls (a newer scan started, or the
+// user reopened a history entry) are dropped via scorePollToken.
+async function pollScores(snapId, { intervalMs = 900, maxMs = 90000 } = {}) {
+  const myToken = ++scorePollToken;
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    if (myToken !== scorePollToken) return; // superseded by a newer scan/reopen
+    let data;
+    try {
+      const res = await fetch(`/match/${snapId}/scores`);
+      if (!res.ok) return;
+      data = await res.json();
+    } catch {
+      continue; // transient network hiccup, keep polling
+    }
+    if (!data.done) continue;
+    if (myToken !== scorePollToken) return;
+    render({ ...currentResult, matchKind: data.matchKind, candidates: data.candidates });
+    if (activeScanId) updateSavedScanResult(activeScanId, data.matchKind, data.candidates);
+    return;
+  }
+}
+
+function confidenceLabel(candidate) {
+  if (candidate.confidence == null) return { text: "◌ Scoring…", cls: "is-scoring" };
+  if (candidate.confidence >= 70) return { text: `${candidate.confidence}% match`, cls: "is-confident" };
+  return { text: `${candidate.confidence}% match`, cls: "" };
+}
+
 function render(data) {
+  currentResult = data;
   rAgency.textContent = data.agency || "Agency not detected";
   rPhone.textContent = data.phone ? "📞 " + data.phone : "";
   rTown.textContent = data.town ? "📍 " + data.town : "";
@@ -321,20 +431,291 @@ function render(data) {
 
   const list = (data.candidates || []).filter((c) => c.listingUrl);
   if (!list.length) {
-    statusEl.textContent = "No listings surfaced yet — adjust the location or enter the address to refine.";
-    resetBtn.hidden = false;
+    statusEl.textContent = data.matchKind === "pending"
+      ? "Reading the sign and finding listings…"
+      : "No listings surfaced yet — adjust the location or enter the address to refine.";
+    resetBtn.hidden = data.matchKind === "pending";
     return;
   }
-  statusEl.textContent = "";
+  statusEl.textContent = data.matchKind === "pending" ? "Ranking candidates…" : "";
   candHead.hidden = false;
-  for (const c of list) {
+  candidates.innerHTML = "";
+  list.forEach((c, index) => {
     const node = tpl.content.firstElementChild.cloneNode(true);
     node.href = c.listingUrl;
     const img = node.querySelector("img");
     if (c.facadeImageUrl) { img.src = c.facadeImageUrl; } else { img.parentElement.style.display = "none"; }
-    node.querySelector(".card-addr").textContent = c.address || "Listing";
-    node.querySelector(".card-price").textContent = c.price ? c.price : "";
+    node.querySelector(".card-addr").textContent = c.address || c.ref || "Listing";
+    node.querySelector(".card-price").textContent = c.price || "";
+    const conf = confidenceLabel(c);
+    const confEl = node.querySelector(".card-confidence");
+    confEl.textContent = conf.text;
+    if (conf.cls) confEl.classList.add(conf.cls);
+    if (data.matchKind === "confident" && index === 0) node.classList.add("is-top");
+    if (data.confirmedListingUrl && data.confirmedListingUrl === c.listingUrl) node.classList.add("is-confirmed");
+
+    // Tapping the photo enlarges it instead of navigating (lightbox, S6).
+    img.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); openLightbox(img.src, node.querySelector(".card-addr").textContent); });
+
+    // Tapping the card elsewhere opens the listing (default <a> behaviour) and
+    // records the pick as the confirmed match, both on-device and server-side.
+    node.addEventListener("click", () => {
+      candidates.querySelectorAll(".card").forEach((card) => card.classList.remove("is-confirmed"));
+      node.classList.add("is-confirmed");
+      statusEl.textContent = `Confirmed: ${c.address || c.listingUrl}`;
+      confirmPick(c.listingUrl);
+    });
+
     candidates.appendChild(node);
-  }
+  });
   resetBtn.hidden = false;
+}
+
+function confirmPick(listingUrl) {
+  if (activeScanId) confirmSavedScan(activeScanId, listingUrl);
+  if (!activeSnapId) return;
+  fetch("/confirm", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ snapId: activeSnapId, listingUrl }),
+  }).catch(() => {});
+}
+
+/* ---------- Scan history (per-device, localStorage) ---------- */
+
+const HISTORY_KEY = "immosnap.history.v1";
+const HISTORY_LIMIT = 30;
+
+function loadHistory() {
+  try {
+    const items = JSON.parse(localStorage.getItem(HISTORY_KEY));
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
+}
+
+// Persist newest-first. On quota errors, drop the oldest entries and retry so a
+// big run never wipes the whole history.
+function persistHistory(items) {
+  let list = items.slice(0, HISTORY_LIMIT);
+  while (list.length) {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+      return list;
+    } catch {
+      list = list.slice(0, -1);
+    }
+  }
+  try {
+    localStorage.removeItem(HISTORY_KEY);
+  } catch {}
+  return [];
+}
+
+// Downscale the captured photo to a small JPEG data URL so it survives in
+// localStorage without blowing the quota. Returns null if it can't render.
+function makeThumbnail(file, maxDim = 360) {
+  return new Promise((resolve) => {
+    if (!file) return resolve(null);
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", 0.7));
+      } catch {
+        resolve(null);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+    img.src = url;
+  });
+}
+
+async function saveScan(data, file) {
+  const id = `scan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const thumbnail = await makeThumbnail(file);
+  const record = {
+    id,
+    snapId: data.snapId || null,
+    ts: Date.now(),
+    thumbnail,
+    agency: data.agency || null,
+    phone: data.phone || null,
+    town: data.town || null,
+    website: data.website || null,
+    matchKind: data.matchKind || null,
+    candidates: Array.isArray(data.candidates) ? data.candidates : [],
+    confirmedListingUrl: null,
+  };
+  const history = persistHistory([record, ...loadHistory()]);
+  renderHistory(history);
+  return record;
+}
+
+// Phase B lands after the record is already saved: patch in the final scored
+// candidates + verdict so history reflects the real result, not the "pending"
+// placeholder used at snap time.
+function updateSavedScanResult(scanId, matchKind, candidates) {
+  const history = loadHistory();
+  const record = history.find((item) => item.id === scanId);
+  if (!record) return;
+  record.matchKind = matchKind;
+  record.candidates = candidates;
+  renderHistory(persistHistory(history));
+}
+
+function confirmSavedScan(scanId, listingUrl) {
+  const history = loadHistory();
+  const record = history.find((item) => item.id === scanId);
+  if (!record) return;
+  record.confirmedListingUrl = listingUrl;
+  renderHistory(persistHistory(history));
+}
+
+function relativeTime(ts) {
+  const diff = Date.now() - ts;
+  const mins = Math.round(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days} d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+function historyBadge(record) {
+  if (record.confirmedListingUrl) return { text: "Confirmed", cls: "is-confident" };
+  if (record.matchKind === "confident") return { text: "Strong match", cls: "is-confident" };
+  if (record.matchKind === "pending") return { text: "Scoring…", cls: "" };
+  if (record.candidates.length) {
+    return { text: `${record.candidates.length} candidate${record.candidates.length === 1 ? "" : "s"}`, cls: "is-candidates" };
+  }
+  return { text: "No listings", cls: "" };
+}
+
+function renderHistory(history = loadHistory()) {
+  const count = history.length;
+  historyCount.textContent = String(count);
+  historyCount.hidden = count === 0;
+  clearHistoryButton.hidden = count === 0;
+  historyEmpty.hidden = count !== 0;
+
+  historyList.innerHTML = "";
+  history.forEach((record) => {
+    const node = historyTemplate.content.firstElementChild.cloneNode(true);
+    const thumb = node.querySelector(".history-thumb");
+    const agency = node.querySelector(".history-agency");
+    const time = node.querySelector(".history-time");
+    const sub = node.querySelector(".history-sub");
+    const badge = node.querySelector(".history-badge");
+
+    thumb.src = record.thumbnail || "/icon.svg";
+    thumb.alt = record.agency ? `Scan of ${record.agency} sign` : "Scan thumbnail";
+    agency.textContent = record.agency || "Unread agency";
+    time.textContent = relativeTime(record.ts);
+    sub.textContent = record.town ? `${record.town}` : "Town unknown";
+    const b = historyBadge(record);
+    badge.textContent = b.text;
+    if (b.cls) badge.classList.add(b.cls);
+
+    node.addEventListener("click", () => openScan(record));
+    historyList.appendChild(node);
+  });
+}
+
+function openScan(record) {
+  activeScanId = record.id;
+  activeSnapId = record.snapId || null;
+  scorePollToken++; // drop any in-flight poll from a different scan
+  lastFile = null; // a reopened scan has no File object to re-submit
+  hero.hidden = true;
+  result.hidden = false;
+  previewImg.src = record.thumbnail || "/icon.svg";
+  savedBanner.hidden = false;
+  const when = relativeTime(record.ts);
+  savedBanner.textContent = `Saved scan from ${when}. Tap a candidate below to update your confirmed pick.`;
+  render({
+    agency: record.agency,
+    phone: record.phone,
+    town: record.town,
+    website: record.website,
+    matchKind: record.matchKind,
+    candidates: record.candidates,
+    confirmedListingUrl: record.confirmedListingUrl,
+  });
+  setView("scan");
+  scanView.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/* ---------- View switching (New scan / History tabs) ---------- */
+
+function setView(view) {
+  const isHistory = view === "history";
+  scanView.hidden = isHistory;
+  historyView.hidden = !isHistory;
+  tabbar.querySelectorAll(".tab").forEach((tab) => {
+    tab.classList.toggle("is-active", tab.dataset.view === view);
+  });
+  if (isHistory) renderHistory();
+}
+
+tabbar.querySelectorAll(".tab").forEach((tab) => {
+  tab.addEventListener("click", () => setView(tab.dataset.view));
+});
+
+clearHistoryButton.addEventListener("click", () => {
+  if (!confirm("Clear all saved scans on this device?")) return;
+  persistHistory([]);
+  renderHistory([]);
+});
+
+/* ---------- Tap-to-enlarge lightbox ---------- */
+
+let lightboxTouchStartY = null;
+
+function openLightbox(src, alt) {
+  if (!src) return;
+  lightboxImg.src = src;
+  lightboxImg.alt = alt || "";
+  lightbox.hidden = false;
+  lightbox.setAttribute("aria-hidden", "false");
+}
+
+function closeLightbox() {
+  lightbox.hidden = true;
+  lightbox.setAttribute("aria-hidden", "true");
+  lightboxImg.src = "";
+}
+
+previewImg.addEventListener("click", () => openLightbox(previewImg.src, "Your photo"));
+lightboxClose.addEventListener("click", closeLightbox);
+lightbox.addEventListener("click", (e) => { if (e.target === lightbox) closeLightbox(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !lightbox.hidden) closeLightbox(); });
+lightbox.addEventListener("touchstart", (e) => { lightboxTouchStartY = e.touches[0].clientY; }, { passive: true });
+lightbox.addEventListener("touchmove", (e) => {
+  if (lightboxTouchStartY == null) return;
+  const dy = e.touches[0].clientY - lightboxTouchStartY;
+  if (dy > 80) { closeLightbox(); lightboxTouchStartY = null; }
+}, { passive: true });
+lightbox.addEventListener("touchend", () => { lightboxTouchStartY = null; });
+
+// Surface the saved-scan count on load.
+renderHistory();
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
 }
