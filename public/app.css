@@ -12,13 +12,42 @@ body{
   color:var(--txt); min-height:100dvh; -webkit-font-smoothing:antialiased;
 }
 .topbar{
-  display:flex; align-items:center; gap:14px; justify-content:space-between;
-  padding:16px 20px; max-width:760px; margin:0 auto; flex-wrap:wrap;
+  max-width:760px; margin:0 auto; padding:12px 20px 8px;
 }
+.topbar-row{
+  display:flex; align-items:center; gap:14px; justify-content:space-between; flex-wrap:wrap;
+}
+.topbar-meta{margin-top:2px}
 .brand{display:flex; align-items:center; gap:9px; font-weight:700; font-size:20px}
 .brand-mark{color:var(--brand-2); font-size:22px}
 .brand-name span{color:var(--brand-2)}
 .brand-tag{color:var(--muted); font-size:13px}
+.buildstamp{color:var(--muted); font-size:11px; opacity:.75; white-space:nowrap}
+.topbar-snap-btn{
+  display:inline-flex; align-items:center; gap:6px; cursor:pointer; flex:none;
+  background:var(--brand); color:#fff; border:none; border-radius:999px;
+  padding:8px 16px; font-weight:650; font-size:14px; box-shadow:var(--shadow);
+}
+.topbar-snap-btn:hover{background:#5a4cf0}
+.topbar-snap-btn:active{transform:translateY(1px)}
+
+/* ── tabbar: New scan / History ─────────────────────────────────── */
+.tabbar{
+  display:flex; gap:6px; max-width:760px; margin:10px auto 0; padding:0 20px;
+}
+.tab{
+  flex:1; background:var(--panel); color:var(--muted); border:1px solid var(--line);
+  box-shadow:none; border-radius:12px 12px 0 0; padding:10px 14px; font-weight:650;
+  font-size:14px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:8px;
+}
+.tab:hover{color:var(--txt)}
+.tab.is-active{background:var(--brand); color:#fff; border-color:var(--brand)}
+.tab-count{
+  min-width:20px; padding:1px 7px; border-radius:999px; font-size:.76rem; font-weight:700;
+  background:rgba(255,255,255,.22); color:inherit;
+}
+.tab:not(.is-active) .tab-count{background:var(--panel-2); color:var(--brand-2)}
+
 .wrap{max-width:760px; margin:0 auto; padding:8px 20px 40px}
 
 .hero{text-align:center; padding:18px 0 8px}
@@ -148,11 +177,16 @@ body.modal-open{overflow:hidden}
   transition:.16s transform,.16s border-color,.16s box-shadow;
 }
 .card:hover{transform:translateY(-2px); border-color:var(--brand); box-shadow:var(--shadow)}
+.card.is-top{border-color:var(--ok)}
+.card.is-confirmed{border-color:var(--ok); box-shadow:0 0 0 1px var(--ok)}
 .card-img{aspect-ratio:16/10; background:#000}
 .card-img img{width:100%; height:100%; object-fit:cover; display:block}
 .card-body{padding:12px 14px}
 .card-addr{font-weight:650}
 .card-price{color:var(--brand-2); font-weight:600; margin-top:3px; font-size:14px}
+.card-confidence{font-size:12px; margin-top:5px; color:var(--muted)}
+.card-confidence.is-scoring::before{content:"◌ "}
+.card-confidence.is-confident{color:var(--ok); font-weight:650}
 .card-cta{color:var(--muted); font-size:13px; margin-top:8px}
 
 .reset-btn{
@@ -161,3 +195,45 @@ body.modal-open{overflow:hidden}
 }
 .reset-btn:hover{background:#5a4cf0}
 .foot{text-align:center; color:var(--muted); font-size:12px; padding:24px}
+
+/* ── scan history (per-device, localStorage) ───────────────────── */
+.saved-banner{
+  margin:0 0 14px; padding:11px 14px; border-radius:12px; font-weight:600; font-size:13px;
+  background:rgba(55,211,155,.12); color:var(--ok); border:1px solid rgba(55,211,155,.3);
+}
+.history-head{display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:18px 0 4px}
+.history-head .history-title{font-size:clamp(24px,5vw,32px); margin:.2em 0 .15em}
+.history-empty{margin-top:16px; padding:26px 18px; text-align:center; background:var(--panel); border:1px solid var(--line); border-radius:var(--r); color:var(--muted)}
+.history-list{display:grid; gap:12px; margin-top:16px}
+.history-card{
+  display:grid; grid-template-columns:76px minmax(0,1fr); gap:14px; padding:12px; border-radius:16px;
+  text-align:left; background:var(--panel); border:1px solid var(--line); color:var(--txt); cursor:pointer; align-items:center;
+}
+.history-card:hover{border-color:var(--brand)}
+.history-thumb{width:76px; height:76px; object-fit:cover; border-radius:12px; background:var(--panel-2)}
+.history-meta{min-width:0}
+.history-topline{display:flex; align-items:baseline; justify-content:space-between; gap:10px}
+.history-agency{font-weight:700; font-size:1rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.history-time{flex:none; font-size:.8rem; color:var(--muted)}
+.history-sub{margin:4px 0 8px; color:var(--muted); font-size:.88rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.history-badge{display:inline-flex; padding:3px 10px; border-radius:999px; font-size:.78rem; font-weight:700; background:var(--panel-2); color:var(--muted)}
+.history-badge.is-confident{background:rgba(55,211,155,.15); color:var(--ok)}
+.history-badge.is-candidates{background:rgba(155,140,255,.15); color:var(--brand-2)}
+
+@media (max-width:520px){
+  .history-head{flex-direction:column}
+}
+
+/* ── lightbox: tap-to-enlarge for the preview + any candidate/history photo ── */
+.tappable{cursor:zoom-in}
+.lightbox{
+  position:fixed; inset:0; z-index:1200; display:flex; align-items:center; justify-content:center;
+  background:rgba(6,7,18,.92); padding:20px;
+}
+.lightbox[hidden]{display:none}
+.lightbox img{max-width:100%; max-height:100%; border-radius:10px; object-fit:contain; touch-action:none}
+.lightbox-close{
+  position:absolute; top:16px; right:16px; width:40px; height:40px; border-radius:999px; border:none;
+  background:rgba(255,255,255,.12); color:#fff; font-size:18px; cursor:pointer;
+}
+.lightbox-close:hover{background:rgba(255,255,255,.2)}
