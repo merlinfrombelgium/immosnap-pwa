@@ -1,5 +1,5 @@
-const CACHE = "immosnap-demo-v9";
-const ASSETS = ["/", "/app.css?v=9", "/app.js?v=9", "/manifest.json", "/icon.svg"];
+const CACHE = "immosnap-v2-1";
+const ASSETS = ["/", "/app.css?v=1", "/app.js?v=1", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));

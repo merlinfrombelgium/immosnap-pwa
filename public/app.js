@@ -1,13 +1,20 @@
-// ImmoSnap PWA front-end.
-// One "working location" (photo EXIF | device GPS | typed address | pinned point)
-// feeds the existing POST /match. Map display uses Leaflet (tiles only); all
-// geocoding / reverse-geocoding is Google, server-side (GET /geocode, /reverse).
+// ImmoSnap v2 front-end. Vanilla JS, no framework, no map dependency.
+// Perf-first: Phase A (POST /match) returns candidates immediately, unscored;
+// Phase B scores stream in via polling GET /match/:snapId/scores. exifr is
+// self-hosted and imported lazily (only once a photo is picked), never eagerly.
 
-const fileInput = document.querySelector("#file");
 const cameraInput = document.querySelector("#camera");
+const fileInput = document.querySelector("#file");
 const dropzone = document.querySelector("#dropzone");
 const gpsBadge = document.querySelector("#gps-badge");
 const gpsBtn = document.querySelector("#gps-btn");
+const manualBtn = document.querySelector("#manual-btn");
+const manualForm = document.querySelector("#manual-form");
+const manualInput = document.querySelector("#manual-input");
+const manualHint = document.querySelector("#manual-hint");
+const topSnapBtn = document.querySelector("#top-snap");
+const buildStamp = document.querySelector("#build-stamp");
+
 const hero = document.querySelector("#hero");
 const result = document.querySelector("#result");
 const previewImg = document.querySelector("#preview-img");
@@ -16,52 +23,91 @@ const rPhone = document.querySelector("#r-phone");
 const rTown = document.querySelector("#r-town");
 const statusEl = document.querySelector("#status");
 const candHead = document.querySelector("#cand-head");
-const candidates = document.querySelector("#candidates");
-const tpl = document.querySelector("#candidate-template");
+const scoringNote = document.querySelector("#scoring-note");
+const candidatesEl = document.querySelector("#candidates");
+const candidateTpl = document.querySelector("#candidate-template");
 const resetBtn = document.querySelector("#reset");
 
-// location panel
-const locBadge = document.querySelector("#loc-badge");
-const locAddr = document.querySelector("#loc-addr");
-const mapWrap = document.querySelector("#map-wrap");
-const adjustBtn = document.querySelector("#adjust-btn");
-const manualBtn = document.querySelector("#manual-btn");
-const manualForm = document.querySelector("#manual-form");
-const manualInput = document.querySelector("#manual-input");
-const manualHint = document.querySelector("#manual-hint");
+const tabbar = document.querySelector("#tabbar");
+const viewScan = document.querySelector("#view-scan");
+const viewHistory = document.querySelector("#view-history");
+const historyList = document.querySelector("#history-list");
+const historyEmpty = document.querySelector("#history-empty");
+const historyCount = document.querySelector("#history-count");
+const historyTemplate = document.querySelector("#history-template");
+const clearHistoryBtn = document.querySelector("#clear-history");
 
-// modal
-const modal = document.querySelector("#map-modal");
-const modalAddr = document.querySelector("#modal-addr");
-const modalCancel = document.querySelector("#modal-cancel");
-const modalConfirm = document.querySelector("#modal-confirm");
+const lightbox = document.querySelector("#lightbox");
+const lightboxImg = document.querySelector("#lightbox-img");
 
-// ── location state: every source kept separately, one "working" derived ──────
-let exifCoords = null, deviceCoords = null, manualCoords = null, pinCoords = null;
-let working = null, source = null;
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+
+// ── prominent version + timestamp (FR4) ────────────────────────────────────
+fetch("/version")
+  .then((r) => r.json())
+  .then((v) => {
+    const started = new Date(v.startedAt);
+    const stamp = `${v.branch} v${v.version}${v.sha ? " · " + v.sha : ""} · up since ${started.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+    buildStamp.textContent = stamp;
+  })
+  .catch(() => { buildStamp.textContent = "build unknown"; });
+
+// ── tabs ────────────────────────────────────────────────────────────────
+tabbar.addEventListener("click", (e) => {
+  const btn = e.target.closest(".tab");
+  if (!btn) return;
+  for (const t of tabbar.querySelectorAll(".tab")) t.classList.toggle("is-active", t === btn);
+  const showHistory = btn.dataset.tab === "history";
+  viewScan.hidden = showHistory;
+  viewHistory.hidden = !showHistory;
+  if (showHistory) renderHistory();
+});
+
+function goToScanTab() {
+  tabbar.querySelector('[data-tab="scan"]').click();
+}
+
+// persistent top snap control: always reachable, from any view/state
+topSnapBtn.addEventListener("click", () => {
+  goToScanTab();
+  hero.hidden = false;
+  result.hidden = true;
+  cameraInput.click();
+});
+
+// ── location: photo EXIF -> device GPS -> manual address ──────────────────
+let exifCoords = null, deviceCoords = null, manualCoords = null;
+let working = null, workingSource = null;
 let lastFile = null;
-let inlineMap = null, inlineMarker = null;
-let modalMap = null, modalMarker = null, modalPick = null;
-let addrToken = 0, modalAddrToken = 0;
-
-const SOURCE_LABEL = { photo: "photo EXIF", device: "device GPS", manual: "address", pin: "pinned" };
-const DEFAULT_CENTER = { lat: 50.8503, lon: 4.3517 }; // Brussels, when nothing else
+let pollToken = 0;
+let activeSnapId = null;
+let confirmedListingUrl = null;
 
 function isValid(c) {
   return !!c && Number.isFinite(c.lat) && Number.isFinite(c.lon) && (c.lat !== 0 || c.lon !== 0);
 }
 
-// Single source of truth for which location wins (mirrors src/lib/location.ts):
-// pinned > typed address > photo EXIF > device GPS.
 function recomputeWorking() {
-  const pick = isValid(pinCoords) ? { c: pinCoords, s: "pin" }
-    : isValid(manualCoords) ? { c: manualCoords, s: "manual" }
+  const pick = isValid(manualCoords) ? { c: manualCoords, s: "manual" }
     : isValid(exifCoords) ? { c: exifCoords, s: "photo" }
     : isValid(deviceCoords) ? { c: deviceCoords, s: "device" }
     : null;
   working = pick ? pick.c : null;
-  source = pick ? pick.s : null;
-  return working;
+  workingSource = pick ? pick.s : null;
+}
+
+const SOURCE_LABEL = { photo: "photo EXIF", device: "device GPS", manual: "typed address" };
+
+function updateGpsBadge() {
+  if (isValid(working)) {
+    gpsBadge.textContent = `📍 ${SOURCE_LABEL[workingSource]}: ${working.lat.toFixed(4)}, ${working.lon.toFixed(4)}`;
+    gpsBadge.className = "badge badge-ok";
+  } else {
+    gpsBadge.textContent = "No location yet";
+    gpsBadge.className = "badge badge-muted";
+  }
 }
 
 function getDeviceGps() {
@@ -75,122 +121,22 @@ function getDeviceGps() {
   });
 }
 
-// ── inline DISPLAY-ONLY map (no drag/zoom/scroll); whole thing taps to modal ──
-function ensureInlineMap(lat, lon) {
-  if (!window.L) return;
-  try {
-    if (!inlineMap) {
-      inlineMap = L.map("map", {
-        zoomControl: false, attributionControl: false,
-        dragging: false, scrollWheelZoom: false, doubleClickZoom: false,
-        boxZoom: false, keyboard: false, touchZoom: false, tap: false,
-      }).setView([lat, lon], 16);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(inlineMap);
-      inlineMarker = L.marker([lat, lon]).addTo(inlineMap);
-    } else {
-      inlineMap.setView([lat, lon], 16);
-      inlineMarker.setLatLng([lat, lon]);
-    }
-    setTimeout(() => { try { inlineMap.invalidateSize(); } catch {} }, 30);
-  } catch {}
+// exifr is self-hosted (public/vendor/exifr-lite.esm.mjs) and imported lazily,
+// on demand, only once a photo is actually picked. Never loaded eagerly.
+let exifrPromise = null;
+function loadExifr() {
+  if (!exifrPromise) exifrPromise = import("./vendor/exifr-lite.esm.mjs");
+  return exifrPromise;
 }
-
-async function showResolvedAddress(coords) {
-  const t = ++addrToken;
-  locAddr.textContent = "Resolving address…";
-  try {
-    const r = await fetch(`/reverse?lat=${coords.lat}&lon=${coords.lon}`);
-    if (!r.ok) { if (t === addrToken) locAddr.textContent = ""; return; }
-    const d = await r.json();
-    if (t === addrToken) locAddr.textContent = d.formatted || "";
-  } catch { if (t === addrToken) locAddr.textContent = ""; }
-}
-
-function updateLocUI() {
-  const has = isValid(working);
-  mapWrap.hidden = !has;
-  if (has) {
-    const label = SOURCE_LABEL[source] || source;
-    const txt = `📍 ${label}: ${working.lat.toFixed(4)}, ${working.lon.toFixed(4)}`;
-    locBadge.textContent = txt; locBadge.className = "badge badge-ok";
-    gpsBadge.textContent = txt; gpsBadge.className = "badge badge-ok";
-    ensureInlineMap(working.lat, working.lon);
-    if (source !== "manual") showResolvedAddress(working);
-  } else {
-    locBadge.textContent = "No location detected — enter an address below";
-    locBadge.className = "badge badge-muted";
-    gpsBadge.textContent = "No location in photo"; gpsBadge.className = "badge badge-muted";
-    locAddr.textContent = "";
-    manualForm.hidden = false; // surface the fallback prominently
-  }
-}
-
-// ── expandable modal map: the ONLY place the pin can move ─────────────────────
-function openModal() {
-  const center = isValid(working) ? working : DEFAULT_CENTER;
-  modalPick = { lat: center.lat, lon: center.lon };
-  modalAddr.textContent = "";
-  modal.hidden = false;
-  modal.setAttribute("aria-hidden", "false");
-  document.body.classList.add("modal-open");
-  if (!window.L) return;
-  try {
-    if (!modalMap) {
-      modalMap = L.map("modal-map").setView([center.lat, center.lon], 16);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19, attribution: "© OpenStreetMap",
-      }).addTo(modalMap);
-      modalMarker = L.marker([center.lat, center.lon], { draggable: true }).addTo(modalMap);
-      modalMap.on("click", (e) => { modalMarker.setLatLng(e.latlng); setModalPick(e.latlng); });
-      modalMarker.on("dragend", () => setModalPick(modalMarker.getLatLng()));
-    } else {
-      modalMap.setView([center.lat, center.lon], 16);
-      modalMarker.setLatLng([center.lat, center.lon]);
-    }
-    setTimeout(() => { try { modalMap.invalidateSize(); } catch {} }, 60);
-  } catch {}
-}
-
-function setModalPick(latlng) {
-  modalPick = { lat: latlng.lat, lon: latlng.lng };
-  const t = ++modalAddrToken;
-  modalAddr.textContent = "Resolving…";
-  fetch(`/reverse?lat=${modalPick.lat}&lon=${modalPick.lon}`)
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => { if (t === modalAddrToken) modalAddr.textContent = (d && d.formatted) || ""; })
-    .catch(() => { if (t === modalAddrToken) modalAddr.textContent = ""; });
-}
-
-function closeModal() {
-  modal.hidden = true;
-  modal.setAttribute("aria-hidden", "true");
-  document.body.classList.remove("modal-open");
-}
-
-// ── wiring ────────────────────────────────────────────────────────────────
-dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("drag"); });
-dropzone.addEventListener("dragleave", () => dropzone.classList.remove("drag"));
-dropzone.addEventListener("drop", (e) => {
-  e.preventDefault(); dropzone.classList.remove("drag");
-  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-});
-fileInput.addEventListener("change", () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
-// "Take photo" (rear camera, capture="environment") feeds the identical pipeline.
-if (cameraInput) cameraInput.addEventListener("change", () => { if (cameraInput.files[0]) handleFile(cameraInput.files[0]); });
 
 gpsBtn.addEventListener("click", async () => {
   gpsBadge.textContent = "Getting device GPS…";
   const d = await getDeviceGps();
-  if (!d) { gpsBadge.textContent = "Device GPS unavailable/denied"; return; }
-  // explicit "use device instead" → device overrides the other sources
-  deviceCoords = d; exifCoords = null; manualCoords = null; pinCoords = null;
-  recomputeWorking(); updateLocUI();
+  if (!d) { gpsBadge.textContent = "Device GPS unavailable/denied"; gpsBadge.className = "badge badge-muted"; return; }
+  deviceCoords = d; manualCoords = null;
+  recomputeWorking(); updateGpsBadge();
   if (lastFile) runMatch();
 });
-
-// tapping the static thumbnail opens the adjust modal
-mapWrap.addEventListener("click", openModal);
-adjustBtn.addEventListener("click", openModal);
 
 manualBtn.addEventListener("click", () => {
   manualForm.hidden = !manualForm.hidden;
@@ -201,20 +147,19 @@ manualForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const q = manualInput.value.trim();
   if (!q) return;
-  manualHint.hidden = false; manualHint.textContent = "Looking up address…";
   const submitBtn = document.querySelector("#manual-submit");
   submitBtn.disabled = true;
+  manualHint.hidden = false;
+  manualHint.textContent = "Looking up address…";
   try {
     const res = await fetch("/geocode?q=" + encodeURIComponent(q));
-    if (res.status === 404) { manualHint.textContent = "Address not found — try adding the town/postcode."; return; }
+    if (res.status === 404) { manualHint.textContent = "Address not found, try adding the town/postcode."; return; }
     if (!res.ok) throw new Error("geocode " + res.status);
     const d = await res.json();
     manualCoords = { lat: d.lat, lon: d.lon };
-    pinCoords = null; // a freshly typed address supersedes an earlier pin
     manualHint.hidden = true;
-    recomputeWorking(); updateLocUI();
-    locAddr.textContent = q; // show what the user typed
-    runMatch();
+    recomputeWorking(); updateGpsBadge();
+    if (lastFile) runMatch();
   } catch {
     manualHint.textContent = "Couldn't look up that address. Check it and try again.";
   } finally {
@@ -222,55 +167,49 @@ manualForm.addEventListener("submit", async (e) => {
   }
 });
 
-modalConfirm.addEventListener("click", () => {
-  if (modalPick) {
-    pinCoords = { lat: modalPick.lat, lon: modalPick.lon };
-    recomputeWorking(); updateLocUI(); // pin wins → reverse-geocodes + refreshes thumbnail
-    closeModal();
-    runMatch();
-  } else {
-    closeModal();
-  }
+// ── capture wiring ──────────────────────────────────────────────────────
+dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("drag"); });
+dropzone.addEventListener("dragleave", () => dropzone.classList.remove("drag"));
+dropzone.addEventListener("drop", (e) => {
+  e.preventDefault(); dropzone.classList.remove("drag");
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
 });
-modalCancel.addEventListener("click", closeModal); // discard
-modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+fileInput.addEventListener("change", () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+cameraInput.addEventListener("change", () => { if (cameraInput.files[0]) handleFile(cameraInput.files[0]); });
 
 resetBtn.addEventListener("click", () => {
-  result.hidden = true; hero.hidden = false; candidates.innerHTML = "";
-  candHead.hidden = true; resetBtn.hidden = true; fileInput.value = ""; if (cameraInput) cameraInput.value = "";
-  exifCoords = deviceCoords = manualCoords = pinCoords = working = null; source = null;
-  mapWrap.hidden = true; manualForm.hidden = true; manualHint.hidden = true; manualInput.value = "";
-  locBadge.textContent = "No location yet"; locBadge.className = "badge badge-muted"; locAddr.textContent = "";
-  gpsBadge.textContent = "No location yet"; gpsBadge.className = "badge badge-muted";
+  pollToken++; // stop any in-flight poll from writing into a torn-down panel
+  activeSnapId = null; confirmedListingUrl = null;
+  result.hidden = true; hero.hidden = false;
+  candidatesEl.innerHTML = ""; candHead.hidden = true; resetBtn.hidden = true;
+  fileInput.value = ""; cameraInput.value = "";
+  exifCoords = deviceCoords = manualCoords = working = null; workingSource = null;
+  manualForm.hidden = true; manualHint.hidden = true; manualInput.value = "";
+  updateGpsBadge();
 });
 
-// ── process a chosen photo: resolve initial location, then run the match ──────
 async function handleFile(file) {
   lastFile = file;
   hero.hidden = true;
   result.hidden = false;
   resetBtn.hidden = true;
-  candidates.innerHTML = "";
+  candidatesEl.innerHTML = "";
   candHead.hidden = true;
-  manualHint.hidden = true; manualForm.hidden = true;
+  manualForm.hidden = true; manualHint.hidden = true;
   rAgency.textContent = "—"; rPhone.textContent = ""; rTown.textContent = "";
   previewImg.src = URL.createObjectURL(file);
 
-  // fresh photo → fresh location decision
-  exifCoords = deviceCoords = manualCoords = pinCoords = null;
-
-  // 1) photo EXIF GPS (Google Photos keeps it)
-  statusEl.textContent = "Reading location…"; statusEl.className = "status spin";
+  exifCoords = deviceCoords = manualCoords = null;
+  statusEl.className = "status spin";
+  statusEl.textContent = "Reading location…";
   try {
-    if (window.exifr) {
-      const g = await window.exifr.gps(file);
-      if (g && Number.isFinite(g.latitude) && Number.isFinite(g.longitude)) {
-        exifCoords = { lat: g.latitude, lon: g.longitude };
-      }
+    const exifr = await loadExifr();
+    const g = await exifr.gps(file);
+    if (g && Number.isFinite(g.latitude) && Number.isFinite(g.longitude)) {
+      exifCoords = { lat: g.latitude, lon: g.longitude };
     }
-  } catch { /* ignore */ }
+  } catch { /* no EXIF GPS, fall through */ }
 
-  // 2) no EXIF? try device GPS (you're standing at the sign)
   if (!isValid(exifCoords)) {
     statusEl.textContent = "Getting your location…";
     const d = await getDeviceGps();
@@ -278,63 +217,329 @@ async function handleFile(file) {
   }
 
   recomputeWorking();
-  updateLocUI();
+  updateGpsBadge();
 
-  // 3) neither photo nor device → offer manual entry up front
   if (!isValid(working)) {
     manualForm.hidden = false;
     manualHint.hidden = false;
-    manualHint.textContent = "We couldn't detect a location. Type the property address, or drop a pin on the map.";
+    manualHint.textContent = "We couldn't detect a location. Type the property address, or continue without one.";
   }
 
   runMatch();
 }
 
-// ── run the matcher from the current working location (no location reset) ─────
+// ── Phase A + Phase B polling ───────────────────────────────────────────
 async function runMatch() {
   if (!lastFile) return;
-  statusEl.textContent = "Reading the sign and finding listings…";
+  const myToken = ++pollToken;
   statusEl.className = "status spin";
-  candidates.innerHTML = "";
+  statusEl.textContent = "Reading the sign, resolving the agency…";
+  candidatesEl.innerHTML = "";
   candHead.hidden = true;
 
   const fd = new FormData();
   fd.set("image", lastFile);
   if (isValid(working)) { fd.set("lat", String(working.lat)); fd.set("lon", String(working.lon)); }
 
+  let data;
   try {
     const res = await fetch("/match", { method: "POST", body: fd });
     if (!res.ok) throw new Error("server " + res.status);
-    render(await res.json());
+    data = await res.json();
   } catch {
+    if (myToken !== pollToken) return;
     statusEl.className = "status";
     statusEl.textContent = "Something went wrong reading that photo. Try another.";
     resetBtn.hidden = false;
+    return;
   }
-}
+  if (myToken !== pollToken) return;
 
-function render(data) {
+  activeSnapId = data.snapId;
+  confirmedListingUrl = null;
   rAgency.textContent = data.agency || "Agency not detected";
   rPhone.textContent = data.phone ? "📞 " + data.phone : "";
   rTown.textContent = data.town ? "📍 " + data.town : "";
-  statusEl.className = "status";
 
-  const list = (data.candidates || []).filter((c) => c.listingUrl);
-  if (!list.length) {
-    statusEl.textContent = "No listings surfaced yet — adjust the location or enter the address to refine.";
+  await saveScan(data, lastFile);
+
+  if (!data.candidates.length) {
+    statusEl.className = "status is-none";
+    statusEl.textContent = data.agency
+      ? "No listings surfaced for this agency/town yet. Try a closer photo or add a location."
+      : "Could not read the agency off the sign. Try a sharper photo.";
     resetBtn.hidden = false;
     return;
   }
-  statusEl.textContent = "";
+
   candHead.hidden = false;
-  for (const c of list) {
-    const node = tpl.content.firstElementChild.cloneNode(true);
-    node.href = c.listingUrl;
-    const img = node.querySelector("img");
-    if (c.facadeImageUrl) { img.src = c.facadeImageUrl; } else { img.parentElement.style.display = "none"; }
-    node.querySelector(".card-addr").textContent = c.address || "Listing";
-    node.querySelector(".card-price").textContent = c.price ? c.price : "";
-    candidates.appendChild(node);
+  scoringNote.hidden = false;
+  statusEl.textContent = "Scoring candidates…";
+  renderCandidates(data.candidates);
+
+  if (!data.scoring) {
+    finalizeVerdict(data.matchKind, data.candidates);
+    resetBtn.hidden = false;
+    return;
   }
-  resetBtn.hidden = false;
+
+  pollScores(data.snapId, myToken);
 }
+
+function pollScores(snapId, myToken) {
+  const iv = setInterval(async () => {
+    if (myToken !== pollToken) { clearInterval(iv); return; }
+    let d;
+    try {
+      const r = await fetch(`/match/${snapId}/scores`);
+      if (!r.ok) { clearInterval(iv); return; }
+      d = await r.json();
+    } catch { clearInterval(iv); return; }
+    if (myToken !== pollToken) { clearInterval(iv); return; }
+
+    renderCandidates(d.candidates);
+    if (d.status === "done" || d.status === "error") {
+      clearInterval(iv);
+      scoringNote.hidden = true;
+      finalizeVerdict(d.matchKind, d.candidates);
+      updateScanCandidates(snapId, d.candidates);
+      resetBtn.hidden = false;
+    }
+  }, 1200);
+}
+
+function confidenceLabel(score, pending) {
+  if (pending) return { text: "Scoring…", cls: "is-pending" };
+  if (score >= 70) return { text: `Likely match (${score}%)`, cls: "is-high" };
+  if (score >= 40) return { text: `Possible (${score}%)`, cls: "is-mid" };
+  return { text: `Unlikely (${score}%)`, cls: "is-low" };
+}
+
+function renderCandidates(candidates) {
+  candidatesEl.innerHTML = "";
+  for (const c of candidates) {
+    const node = candidateTpl.content.firstElementChild.cloneNode(true);
+    const pending = c.reason === "pending";
+    node.href = c.listingUrl;
+    if (confirmedListingUrl && confirmedListingUrl === c.listingUrl) node.classList.add("is-top");
+    const img = node.querySelector("img");
+    img.src = c.facadeImageUrl || "/icon.svg";
+    // Tapping the facade photo enlarges it; tapping the rest of the card opens
+    // the listing (default anchor behaviour) and records the confirm.
+    img.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openLightbox(img.src);
+    });
+    node.querySelector(".card-addr").textContent = c.address || c.town || "Listing";
+    node.querySelector(".card-price").textContent = c.price || "";
+    const label = confidenceLabel(c.confidence ?? 0, pending);
+    const confEl = node.querySelector(".card-confidence");
+    confEl.textContent = label.text;
+    confEl.classList.add(label.cls);
+    node.addEventListener("click", () => {
+      if (activeSnapId) confirmScanCandidate(activeSnapId, c.listingUrl);
+    });
+    candidatesEl.appendChild(node);
+  }
+}
+
+function finalizeVerdict(matchKind, candidates) {
+  statusEl.classList.remove("is-confident", "is-candidates", "is-none");
+  if (!candidates.length) {
+    statusEl.classList.add("is-none");
+    statusEl.textContent = "No listings to compare.";
+  } else if (matchKind === "confident") {
+    statusEl.classList.add("is-confident");
+    statusEl.textContent = "Strong match found. Confirm it is the right house.";
+  } else {
+    statusEl.classList.add("is-candidates");
+    statusEl.textContent = "No confident match. Tap the right house to confirm.";
+  }
+}
+
+function confirmScanCandidate(snapId, listingUrl) {
+  confirmedListingUrl = listingUrl;
+  fetch("/confirm", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ snapId, listingUrl }),
+  }).catch(() => {});
+  confirmScanInHistory(snapId, listingUrl);
+  for (const card of candidatesEl.querySelectorAll(".card")) card.classList.remove("is-top");
+  const match = [...candidatesEl.querySelectorAll(".card")].find((n) => n.getAttribute("href") === listingUrl);
+  if (match) match.classList.add("is-top");
+}
+
+// ── scan history (per-device, localStorage) ────────────────────────────
+const HISTORY_KEY = "immosnap.v2.history";
+const HISTORY_LIMIT = 30;
+
+function loadHistory() {
+  try {
+    const items = JSON.parse(localStorage.getItem(HISTORY_KEY));
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistHistory(items) {
+  let list = items.slice(0, HISTORY_LIMIT);
+  while (list.length) {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+      return list;
+    } catch {
+      list = list.slice(0, -1);
+    }
+  }
+  try { localStorage.removeItem(HISTORY_KEY); } catch {}
+  return [];
+}
+
+function makeThumbnail(file, maxDim = 320) {
+  return new Promise((resolve) => {
+    if (!file) return resolve(null);
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", 0.7));
+      } catch { resolve(null); } finally { URL.revokeObjectURL(url); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+async function saveScan(data, file) {
+  const thumbnail = await makeThumbnail(file);
+  const record = {
+    id: data.snapId,
+    ts: Date.now(),
+    thumbnail,
+    agency: data.agency || null,
+    phone: data.phone || null,
+    town: data.town || null,
+    matchKind: data.matchKind || null,
+    candidates: data.candidates || [],
+    confirmedListingUrl: null,
+  };
+  persistHistory([record, ...loadHistory().filter((r) => r.id !== record.id)]);
+  renderHistory();
+  return record;
+}
+
+function updateScanCandidates(snapId, candidates) {
+  const history = loadHistory();
+  const record = history.find((r) => r.id === snapId);
+  if (!record) return;
+  record.candidates = candidates;
+  persistHistory(history);
+}
+
+function confirmScanInHistory(snapId, listingUrl) {
+  const history = loadHistory();
+  const record = history.find((r) => r.id === snapId);
+  if (!record) return;
+  record.confirmedListingUrl = listingUrl;
+  persistHistory(history);
+  renderHistory();
+}
+
+function relativeTime(ts) {
+  const diff = Date.now() - ts;
+  const mins = Math.round(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days} d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+function historyBadge(record) {
+  if (record.confirmedListingUrl) return { text: "Confirmed", cls: "is-confident" };
+  if (record.matchKind === "confident") return { text: "Strong match", cls: "is-confident" };
+  if (record.candidates.length) return { text: `${record.candidates.length} candidates`, cls: "is-candidates" };
+  return { text: "No listings", cls: "" };
+}
+
+function renderHistory() {
+  const history = loadHistory();
+  historyCount.textContent = String(history.length);
+  historyCount.hidden = history.length === 0;
+  clearHistoryBtn.hidden = history.length === 0;
+  historyEmpty.hidden = history.length !== 0;
+
+  historyList.innerHTML = "";
+  for (const record of history) {
+    const node = historyTemplate.content.firstElementChild.cloneNode(true);
+    node.querySelector(".history-thumb").src = record.thumbnail || "/icon.svg";
+    node.querySelector(".history-agency").textContent = record.agency || "Unread agency";
+    node.querySelector(".history-time").textContent = relativeTime(record.ts);
+    node.querySelector(".history-sub").textContent = record.town || "Town unknown";
+    const b = historyBadge(record);
+    const badgeEl = node.querySelector(".history-badge");
+    badgeEl.textContent = b.text;
+    if (b.cls) badgeEl.classList.add(b.cls);
+    node.addEventListener("click", () => openScan(record));
+    historyList.appendChild(node);
+  }
+}
+
+function openScan(record) {
+  goToScanTab();
+  activeSnapId = record.id;
+  confirmedListingUrl = record.confirmedListingUrl || null;
+  lastFile = null;
+  pollToken++; // any earlier live poll stops touching the panel
+  hero.hidden = true;
+  result.hidden = false;
+  resetBtn.hidden = false;
+  candHead.hidden = false;
+  scoringNote.hidden = true;
+  previewImg.src = record.thumbnail || "/icon.svg";
+  rAgency.textContent = record.agency || "Unknown agency";
+  rPhone.textContent = record.phone ? "📞 " + record.phone : "";
+  rTown.textContent = record.town ? "📍 " + record.town : "";
+  renderCandidates(record.candidates);
+  finalizeVerdict(record.matchKind, record.candidates);
+}
+
+clearHistoryBtn.addEventListener("click", () => {
+  try { localStorage.removeItem(HISTORY_KEY); } catch {}
+  renderHistory();
+});
+
+// ── tap-to-enlarge lightbox (FR6): one reusable overlay, no dependency ──────
+function openLightbox(src) {
+  if (!src) return;
+  lightboxImg.src = src;
+  lightbox.hidden = false;
+  lightbox.setAttribute("aria-hidden", "false");
+}
+function closeLightbox() {
+  lightbox.hidden = true;
+  lightbox.setAttribute("aria-hidden", "true");
+  lightboxImg.src = "";
+}
+document.addEventListener("click", (e) => {
+  const trigger = e.target.closest(".lightbox-trigger");
+  if (!trigger) return;
+  e.preventDefault();
+  openLightbox(trigger.src);
+});
+lightbox.addEventListener("click", closeLightbox);
+window.addEventListener("keydown", (e) => { if (e.key === "Escape") closeLightbox(); });
+
+renderHistory();
+updateGpsBadge();
